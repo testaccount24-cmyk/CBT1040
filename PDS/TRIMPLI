@@ -1,0 +1,130 @@
+/* REXX   TRIMPLI     easily gets rid of billions and billions of
+               pages of yukky SQL stuff from your compiler listings.
+
+               Save the PL/1 SYSPRINT file to a dataset, edit it,
+               and execute TRIMPLI as a "COMMAND ===> trimpli".
+               When you print the listing, all the SQL junk pages
+               will be missing.
+*/
+address ISREDIT                        /* my default address space   */
+"MACRO (opts)"                         /* I'm an ISPF EditMacro      */
+parse value "0"    with,
+             sw.   helpmsg
+parse upper var opts opts              /* shift to uppercase         */
+if WordPos( "?",opts ) > 0 then,
+   call HELP                           /*                           -*/
+parse var opts "TRACE" tv .            /* see if there's a trace val */
+parse value tv "N" with tv .           /* default to NORMAL          */
+rc = Trace( 'O' ) ; rc = Trace( tv )   /* activate TRACE             */
+
+sw.0Info = WordPos("NOSTATS",opts)>0   /* stats as data ?            */
+lvl = WordPos( "TEST", opts ) = 0 then,   /* Test-mode ?             */
+
+"CAPS OFF"                             /* allow lower case           */
+linetag = "    <trimpli >"             /* to mark deletions          */
+"RESET"
+"SEEK '1' 1 ALL"
+"(origpgs) = SEEK_COUNTS"              /* pages at start             */
+"SEEK P'¬' LAST"
+"(origlns) = CURSOR"                   /* lines at start             */
+
+"X ALL"                                /* exclude everything         */
+
+"SEEK 'ATTRIBUTE AND CROSS-REF'"
+"F 'SQLPLIST'"
+if rc > 0 then exit
+
+"LABEL .zcsr = .A" lvl                 /* mark the line "A"          */
+"F 'SQLPLIST' LAST"
+"F ' '  2"
+"LABEL .zcsr = .B" lvl                 /* mark the line "B"          */
+"RESET .a .b"                          /* pop all lines betw A and B */
+"DELETE ALL NX"                        /* aloha, any shown lines...  */
+
+"UP MAX"
+do forever
+   "F 'SQLPLIST' "
+   if rc > 0 then leave
+   "F 'DO;' 19 PREV"
+   "LABEL .zcsr = .A" lvl              /* mark the line "A"          */
+   "F 'END;' 19 NEXT"
+   "LABEL .zcsr = .B" lvl              /* mark the line "A"          */
+   "RESET .a .b"                       /* pop all lines betw A and B */
+   "DELETE ALL NX"                     /* aloha, any shown lines...  */
+end                                    /* forever                    */
+
+"SEEK '1' 1 ALL"
+"(remnpgs) = SEEK_COUNTS"              /* pages after clean-up       */
+"SEEK P'¬' LAST"
+"(remnlns) = CURSOR"                   /* lines after clean-up       */
+
+diffpgs = origpgs - remnpgs            /* pages saved                */
+difflns = origlns - remnlns            /* lines saved                */
+origlns = origlns + 0
+origpgs = origpgs + 0
+remnlns = remnlns + 0
+remnpgs = remnpgs + 0
+"LABEL 000002 = .T" lvl                /* mark the line "T"          */
+if sw.0Info then form = "NOTELINE"
+            else form = "DATALINE"
+
+                                       /* report on how well TRIMPLI */
+                                       /* did its job :-)            */
+tlmsg = "  TRIMPLI has reduced this listing from",
+     Right(origlns,5) "lines (" Right(origpgs,4)" pages ) "
+"LINE_BEFORE .T =" form "'" tlmsg "'"
+
+tlmsg = "                                     to",
+     Right(remnlns,5) "lines (" Right(remnpgs,4)" pages ),"
+"LINE_BEFORE .T =" form "'" tlmsg "'"
+
+tlmsg = "                            a saving of",
+     Right(difflns,5) "lines (" Right(diffpgs,4)" pages )."
+"LINE_BEFORE .T =" form "'" tlmsg "'"
+
+"CURSOR ="1 0                          /* put the cursor up top      */
+
+exit                                   /*@ TRIMPLI                   */
+/*
+.  ----------------------------------------------------------------- */
+HELP:                                  /*@                           */
+address TSO;"CLEAR"
+   parse source  sys_id  how_invokt  exec_name  DD_nm  DS_nm,
+                     as_invokt  cmd_env  addr_spc  usr_tokn
+if helpmsg <> "" then say helpmsg
+ex_nam = Left(exec_name,8)             /* predictable size           */
+
+say "                                                                          "
+say "  "ex_nam"      is designed to operate on saved PL/I compiler listings.   "
+say "                Its function is to remove all of the detritus attending   "
+say "                a compile involving SQL function, none of which is of     "
+say "                sufficient value that it warrants taking up disk space.   "
+say "                                                                          "
+say "  Syntax:   "ex_nam"  TEST                                                "
+say "                      NOSTATS                                             "
+say "                                                                          "
+say "            TEST      causes the temporary labels generated in the process"
+say "                      to be visible.  Ordinarily, this information is not "
+say "                      needed.                                             "
+say "                                                                          "
+say "            NOSTATS   causes the inserted informational messages to be    "
+say "                      cast as NOTELINEs.  By default, they are DATALINEs. "
+say "                                                                          "
+"NEWSTACK"; pull ; "CLEAR" ; "DELSTACK"
+say "   Debugging tools provided include:                                      "
+say "                                                                          "
+say "        TRACE tv: will use value following TRACE to place the execution   "
+say "                  into REXX TRACE Mode.                                   "
+say "                                                                          "
+say "                                                                          "
+say "   Debugging tools can be accessed in the following manner:               "
+say "                                                                          "
+say "        TSO "ex_nam"  parameters     ((  debug-options                    "
+say "                                                                          "
+say "   For example:                                                           "
+say "                                                                          "
+say "        TSO "ex_nam"  (( trace ?r                                         "
+
+if sysvar("SYSISPF") = "ACTIVE" then,
+   address ISPEXEC "CONTROL DISPLAY REFRESH"
+exit                                   /*@ HELP                      */

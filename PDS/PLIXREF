@@ -1,0 +1,215 @@
+/* REXX    PLIXREF    adds statement number references to a PL/I
+                      compiler listing.
+
+           Written by Frank Clarke, Houston, 19981009
+            rexxhead@yahoo.com
+
+     Impact Analysis
+.    SYSEXEC   DENUM
+.    SYSEXEC   PLIXREFO
+.    SYSEXEC   PLIXREFE
+
+     Modification History
+     20030212 fxc converted to be a driver; separate routines will
+                  handle listings from the Optimizing Compiler and
+                  the Enterprise Compiler.
+     20040108 fxc stats reflect compile date/time
+     20040706 fxc SHORTPG only in PLIXREFE
+     20050110 fxc Impact Analysis;
+     20060316 fxc prevent re-run;
+     20070215 fxc always reset stats;
+     20080130 fxc RC=1;
+     20081203 fxc monitor with SYSPMON;
+     20231128 fxc only examine 5 bytes to identify the compiler;
+     20231201 fxc correct setting of dates;
+     20240503 fxc adjust HELP;
+     20240525 fxc activate DENUM;
+     20240728 fxc panel name for error msg;
+     20241107 fxc allow 8-character userids;
+
+*/
+address ISREDIT
+"MACRO (opts)"
+parse source . . exec_name .
+call A_INIT                            /*                           -*/
+if Left(Strip(opts),2) = "?" then call HELP        /*               -*/
+rc = Trace("O"); rc = Trace(tv)
+
+"(init) = LINENUM .zlast"              /* how many initial lines ?   */
+"F P'¬' FIRST"                         /* first non-blank            */
+"(text) = LINE .zcsr"
+
+"F 'PLIXREF' word "                    /* already processed ?        */
+if rc = 0 then ,
+   do
+   "(slug) = LINE .zcsr"               /* acquire the text           */
+   if Pos("was processed by PLIXREF",slug) > 0 then ,
+      do
+      call S_LOAD_STATS                /*                           -*/
+      zerrhm = "ISR00000"
+      zerralrm = "YES"
+      zerrsm = "Already done"
+      zerrlm = "This listing has already been processed by PLIXREF."
+      address ISPEXEC "SETMSG MSG(ISRZ002)"
+      return                           /* halt processing            */
+      end
+   end
+
+if Left(text,5) = "15668"     then do  /* Optimizer                  */
+   newmac = "PLIXREFO"
+   call O_SET_DATE                     /*                           -*/
+   end                                 /* Optimizer                  */
+else,
+if Left(text,5) = "15655"     then do  /* Enterprise                 */
+   newmac = "PLIXREFE"
+   call E_SET_DATE                     /*                           -*/
+   end                                 /* Enterprise                 */
+else,
+   do                                  /* Unknown                    */
+   zerrhm = "ISR00000"
+   zerralrm = "YES"
+   zerrsm = "Unknown compiler"
+   zerrlm = "The header information on this listing cannot be ",
+            "mapped to a recognized compiler."
+   address ISPEXEC "SETMSG MSG(ISRZ002)"
+   return                              /* halt processing            */
+   end                                 /* Unknown                    */
+
+"DENUM "                               /* Denumber source            */
+"RESET "
+(newmac) origopts                      /*                           -*/
+
+if sw.batch then address ISREDIT "END"
+
+exit  1                                /*@ PLIXREF                   */
+/*
+.  ----------------------------------------------------------------- */
+A_INIT:                                /*@                           */
+   address ISREDIT
+
+   upper opts
+   origopts = opts                     /* save original              */
+   if Wordpos("TRACE",opts) > 0 then do
+      parse var opts front "TRACE" tv back
+      opts = front back
+      end
+   else tv  = "N"
+
+   if Wordpos("NOSAVE",opts) > 0 then do
+      parse var opts front "NOSAVE"   back
+      opts = front back
+      nosave = "NOSAVE"
+      end
+   else nosave = ""
+
+   sw.batch     = sysvar("SYSENV")  = "BACK"
+
+return                                 /*@ A_INIT                    */
+/*
+   Parse date from the top line.  Set 'changed', 'created', and 'time'.
+.  ----------------------------------------------------------------- */
+E_SET_DATE:                            /*@                           */
+   address TSO
+
+   parse var text 97 credate  time .
+   if Pos( ".",credate ) > 0 then,
+      changed = Translate(credate , "/" , ".")
+   if Pos( "-",credate ) > 0 then,
+      changed = Translate(credate , "/" , "-")
+   created = changed
+
+return                                 /*@ E_SET_DATE                */
+/*
+   Parse date from the top line.  Set 'changed', 'created', and 'time'.
+.  ----------------------------------------------------------------- */
+O_SET_DATE:                            /*@                           */
+   address TSO
+
+   mth.     = "???"
+   mth.JAN  = "Jan"
+   mth.FEB  = "Feb"
+   mth.MAR  = "Mar"
+   mth.APR  = "Apr"
+   mth.MAY  = "May"
+   mth.JUN  = "Jun"
+   mth.JUL  = "Jul"
+   mth.AUG  = "Aug"
+   mth.SEP  = "Sep"
+   mth.OCT  = "Oct"
+   mth.NOV  = "Nov"
+   mth.DEC  = "Dec"
+
+   parse var text 90 dd mmm yy   time .
+   mmm = Left(mmm,3)
+   cent = yy < 75 ; cc = 19 + cent
+   chgdate = Date("S",dd mth.mmm cc""yy, "N")
+   changed = Translate("CcYy/Mm/Dd" , chgdate , "CcYyMmDd")
+   created = changed
+
+return                                 /*@ O_SET_DATE                */
+/*
+.  ----------------------------------------------------------------- */
+S_LOAD_STATS:                          /*@                           */
+   address ISPEXEC
+
+   if Left(text,5) = "15668"     then,
+      call O_SET_DATE                  /*                           -*/
+   if Left(text,5) = "15655"     then,
+      call E_SET_DATE                  /*                           -*/
+   parse value "PLIXREF 01 00" with ,
+                id      vv mm  .
+   address ISREDIT "(dataset) = DATASET"
+   address ISREDIT "(memname) = MEMBER"
+   "LMINIT DATAID(BASEID)   DATASET('"dataset"')"
+   "LMMSTATS DATAID("baseid")" "MEMBER("memname")" "USER8("id")",
+             "VERSION("vv")" "MODLEVEL("mm")" "MODDATE4("changed")",
+             "MODTIME("time")" "CREATED4("created")"
+   "LMFREE     DATAID("baseid")"
+
+return                                 /*@ S_LOAD_STATS              */
+/*
+.  ----------------------------------------------------------------- */
+HELP:                                  /*@                           */
+address TSO;"CLEAR" ; say ""
+parse source  sys_id  how_invokt  exec_name  .
+say
+ex_nam = Left(exec_name,8)             /* predictable size           */
+
+say "  "ex_nam"      examines a PL/1 compiler listing (via external subroutines"
+say "                PLIXREFE and PLIXREFO) for labels, GOTOs and calls.  The  "
+say "                lines containing labels are then annotated with the       "
+say "                statement numbers of their corresponding GOTOs and CALLs. "
+say "                The GOTOs and CALLs are annotated to show the statement   "
+say "                number of the ENTRY label they reference.                 "
+say "                                                                          "
+say "  Syntax:   "ex_nam"  LOG                                                 "
+say "                      LINK                                                "
+say "                      UNUSED                                              "
+say "                                                                          "
+say "            LOG       requests that an external log of activity be kept   "
+say "                      for this execution.  This is useful for debugging.  "
+say "                                                                          "
+say "            LINK      requests that the LinkEdit listing be kept.  The    "
+say "                      default is to delete it.                            "
+say "                                                                          "
+say "            UNUSED    requests that unused variables be specially listed. "
+say "                                                                          "
+"NEWSTACK"; pull; "CLEAR"; "DELSTACK"
+say "                                                                          "
+say "   Debugging tools provided include:                                      "
+say "                                                                          "
+say "        TRACE tv: will use value following TRACE to place the execution in"
+say "                  REXX TRACE Mode.                                        "
+say "                                                                          "
+say "                                                                          "
+say "   Debugging tools can be accessed in the following manner:               "
+say "                                                                          "
+say "        TSO" ex_nam "    parameters    debug-options                      "
+say "                                                                          "
+say "   For example:                                                           "
+say "                                                                          "
+say "        TSO" ex_nam " (( trace ?r                                         "
+
+if sysvar("SYSISPF") = "ACTIVE" then,
+address ISPEXEC "CONTROL DISPLAY REFRESH"
+exit                                   /*@ HELP                      */

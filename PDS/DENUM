@@ -1,0 +1,121 @@
+/* REXX    DENUM      removes numbering from the source section of a
+                      PL/I compiler listing.
+
+           Written by Frank Clarke  rexxhead@yahoo.com 20240525
+
+     Impact Analysis
+.    SYSEXEC   SEGMENT   returns line numbers of various sections
+
+     Modification History
+     20240527 fxc fix I/A section; reconfigure;
+     20240728 fxc panel name for error msg;
+
+*/ arg argline
+address ISREDIT
+"MACRO (opts)"
+if rc = 20 then do                     /* ISREDIT not available      */
+   address TSO
+   parse source  .  .  exec_name .
+   helpmsg = exec_name "is an EDIT macro"
+   call HELP                           /*                           -*/
+   end
+parse var opts  parms "((" opts
+parse source . . exec_name .
+if Left( Strip( parms ),1 ) = "?" then,
+   call HELP                           /*                           -*/
+upper opts
+opts = Strip( opts,'T',')' )           /* yes we want no bananas     */
+parse var opts "TRACE" tv .
+parse value tv "N" with tv .
+rc = Trace('O') ; rc = Trace(tv)
+
+call A_INIT                            /*                           -*/
+
+"SEGMENT LABELS "                      /* gen LBLLIST                */
+address ISPEXEC "VGET LBLLIST "
+parse var lbllist  .  ".SRC" srcstart .  srcend  .
+srcstart = srcstart + 0
+srcend   = srcend   + 0
+
+"F P'¬' FIRST"                         /* first non-blank            */
+"(text) = LINE .zcsr"
+if Left(text,5) = "15655"     then,    /* Enterprise                 */
+   seqpt = 105                         /* Where's the sequence #?    */
+else,
+if Left(text,5) = "15668"     then,    /* Optimizer                  */
+   seqpt = 90                          /* Where's the sequence #?    */
+else,
+   do                                  /* Unknown                    */
+   zerrhm = "ISR00000"
+   zerralrm = "YES"
+   zerrsm = "Unknown compiler"
+   zerrlm = "The header information on this listing cannot be ",
+            "mapped to a recognized compiler."
+   address ISPEXEC "SETMSG MSG(ISRZ002)"
+   return                              /* halt processing            */
+   end                                 /* Unknown                    */
+
+call S_SKINNY                          /* excise line numbers       -*/
+
+if sw.batch then address ISREDIT "END"
+
+exit  1                                /*@ DENUM                     */
+/*
+.  ----------------------------------------------------------------- */
+A_INIT:                                /*@                           */
+   address ISREDIT
+
+   sw.batch     = sysvar("SYSENV")  = "BACK"
+
+return                                 /*@ A_INIT                    */
+/*
+   Excise line numbers
+.  ----------------------------------------------------------------- */
+S_SKINNY:                              /*@                           */
+   address ISREDIT
+
+   "X ALL "
+   do exx = srcstart to srcend         /* for every line             */
+      "(txt)   = LINE" exx             /* acquire the text           */
+      seq      = Substr( txt,seqpt,8 )   /* snapshot sequence #      */
+      if Datatype( seq,'W' ) then do   /* is it a real number?       */
+         txt  = Overlay( ' ',txt,seqpt,8 )    /* blank it out        */
+         "LINE" exx "= (txt) "         /* and replace it             */
+         "XSTATUS" exx "= NX "         /* un-exclude                 */
+         end                           /* seq                        */
+   end                                 /* exx                        */
+
+return                                 /*@ S_SKINNY                  */
+/*
+.  ----------------------------------------------------------------- */
+HELP:                                  /*@                           */
+address TSO; "CLEAR"
+ex_nam = Left(exec_name,8)             /* predictable size           */
+if Symbol( helpmsg ) <> "LIT" then say helpmsg
+say ""
+
+say "  "ex_nam"      (edit macro) spins a PL/1 compiler listing and removes the"
+say "                source sequence numbers ahead of a PLIXREF operation.     "
+say "                This makes the notations inserted by PLIXREF stand out.   "
+say "                                                                          "
+say "  Syntax:   "ex_nam"  (no parms)                                          "
+say "                                                                          "
+"NEWSTACK"; pull; "CLEAR"; "DELSTACK"
+say "                                                                          "
+say "   Debugging tools provided include:                                      "
+say "                                                                          "
+say "        TRACE tv: will use value following TRACE to place the execution in"
+say "                  REXX TRACE Mode.                                        "
+say "                                                                          "
+say "                                                                          "
+say "   Debugging tools can be accessed in the following manner:               "
+say "                                                                          "
+say "        " ex_nam "    debug-options                                       "
+say "                                                                          "
+say "   For example:                                                           "
+say "                                                                          "
+say "        " ex_nam " (( trace ?r                                            "
+
+if sysvar("SYSISPF") = "ACTIVE" then,
+address ISPEXEC "CONTROL DISPLAY REFRESH"
+exit                                   /*@ HELP                      */

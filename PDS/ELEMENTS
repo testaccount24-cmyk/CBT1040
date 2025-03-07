@@ -1,0 +1,35 @@
+/* REXX    ELEMENTS      Display only the elements found in the
+                         Attribute listing of a PL/I compile.
+
+           Written by Frank Clarke 20060419 rexxhead@yahoo.com
+
+     Impact Analysis
+.    SYSEXEC   SEGMENT
+
+     Modification History
+     ccyymmdd ... ..........
+                  ...
+
+*/
+address ISREDIT
+"MACRO (opts)"
+upper opts
+parse var opts "TRACE" tv .
+parse value tv "N" with tv .
+rc = Trace('O') ; rc = Trace(tv)
+
+"SEGMENT TERSE"
+"SEGMENT LABELS"
+address ISPEXEC "VGET LBLLIST"
+parse var lbllist ".ATTR" attr_start  end_lbl attr_end .
+"X ALL"
+"RES" attr_start attr_end
+"X ALL  .ATTR        .ZF"
+"X ALL"  end_lbl    ".ZL"
+"X ALL  ' '  17"
+"X ALL  '1'  1 "
+"X ALL  S   5"
+"X ALL WORD 'CONSTANT' 45 120"
+"UP MAX"
+
+exit(1)                                /*@ ELEMENTS                  */

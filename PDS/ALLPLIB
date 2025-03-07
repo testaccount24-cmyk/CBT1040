@@ -1,0 +1,73 @@
+/* REXX    ALLPLIB    Find all the PLILIB material in the Configuration
+                      Components section of a compiler listing and
+                      return it in the queue.  The calling routine must
+                      establish the queue before this routine is
+                      called.
+
+           Written by Frank Clarke 20060905 rexxhead@yahoo.com
+
+     Impact Analysis
+.    SYSEXEC   RUNDATA
+.    SYSEXEC   SEGMENT
+
+     Modification History
+     20240527 fxc commenting; enable RUNDATA;
+
+*/ arg arglist
+address ISREDIT
+"MACRO (opts)"
+if rc > 0 then opts = arglist
+upper opts
+parse var opts "TRACE" tv .
+parse value tv "N" with tv .
+rc = Trace( 'O' ) ; rc = Trace(tv)
+call A_INIT                            /*                           -*/
+
+"SEGMENT LABELS"                       /* send label list back       */
+address ISPEXEC "VGET LBLLIST SHARED"
+"SEGMENT"                              /* set labels on lines        */
+if WordPos(".CNFG",lbllist) > 0 then,
+   do
+   "X ALL"
+   tag = "FIRST"
+   do forever
+      "F" plibtail ".CNFG .LINK" tag   /* find between labels        */
+      if rc > 0 then leave
+      tag = "NEXT"
+      "(text) = LINE .ZCSR"            /* acquire the text           */
+      parse var text  2 .  .  ref  .
+      queue ref
+   end                                 /* forever                    */
+   end
+"END"
+exit                                   /*@ ALLPLIB                   */
+/*
+.  ----------------------------------------------------------------- */
+A_INIT:                                /*@                           */
+   address TSO
+
+   "NEWSTACK"
+   "RUNDATA READ  TBLKEY PLIMACS "     /* sets PLIBTAIL              */
+   do queued()                         /* return from RUNDATA        */
+      pull tag tagval
+      if Pos("<ERROR>",line) > 0 then do
+         sw.0Error_Found = 1
+         "DELSTACK"
+         say tag tagval
+         return
+         end
+      tagval  = Space( tagval,1 )
+      @z   = Value( tag,tagval )       /* tag <-- tagval             */
+   end                                 /* queued                     */
+   "DELSTACK"
+   if Symbol( 'plibtail' ) = 'LIT' then do    /* it wasn't set       */
+      helpmsg = "RUNDATA did not supply a value for PLIBTAIL. ",
+                "Correct the RUNDATA table to provide a",
+                "value for PLIBTAIL,",
+                "the LLQ for INCLUDE libs,",
+                "before proceeding. "
+      say helpmsg
+      exit
+      end
+
+return                                 /*@ A_INIT                    */
