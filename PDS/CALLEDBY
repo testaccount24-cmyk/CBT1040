@@ -1,0 +1,83 @@
+/* REXX   CALLEDBY    For PL/1 text, acquires all labels and all calls;
+                      builds relationship between called routines and
+                      the label from which the routine was called.
+
+           Written by Frank Clarke  rexxhead@yahoo.com 2001-ish
+
+     Impact Analysis
+.    SYSEXEC   PGFS
+.    SYSEXEC   STRSORT
+
+     Modification History
+     20240527 fxc modernize comments;
+
+*/   arg argline
+address ISREDIT
+"MACRO (opts) "
+if rc > 0 then opts = argline
+upper opts
+if WordPos( "TRACE",opts ) > 0 then do
+   parse var opts front "TRACE" tv back
+   opts = front back
+   end
+else tv = 'N'
+rc = Trace('O'); rc = Trace( tv )
+
+parse value "" with rtnlist called_by.
+"PGFS"                                 /* expose all PROCs           */
+address ISPEXEC "VGET PGFLIST"
+do Words( pgflist )
+   parse var pgflist  rtn  pgflist
+   "F ALL WORD" rtn
+end                                    /* pgflist                    */
+
+rc = Trace('O'); rc = Trace( tv )
+
+seq = "FIRST"
+do forever
+   "SEEK P'¬' NX " seq
+   if rc > 0 then leave                /* no such line               */
+
+   seq = "NEXT"
+   "(here) = LINENUM .zcsr"
+   "(text) = LINE  .zcsr "             /* acquire text               */
+   parse upper var text 2 w1 .
+   if Right(w1,1) = ":" then do
+      parse var w1 lbl ":" .
+      say "Working" lbl
+                                rc = Trace('O'); rc = Trace( tv )
+      end
+   else do
+      /* can be 'call xyz' or 'ans = xyz(parm)'                      */
+      upper text
+      if Wordpos("CALL",text) > 0 then
+         parse upper var text "CALL" rtn .
+      else,
+         parse var text "=" rtn "("
+
+      if rtn = '' then do              /* something else             */
+         "XSTATUS .zcsr = X"           /* hide it                    */
+         iterate
+         end
+      rtn = Strip( rtn,'T',';' )
+      if WordPos( rtn,pgflist ) = 0 then do
+         "XSTATUS .zcsr = X"           /* hide it                    */
+         iterate
+         end
+
+      say text
+      called_by.rtn = called_by.rtn lbl
+      if Wordpos(rtn,rtnlist) = 0 then rtnlist = rtnlist rtn
+      end                              /* not a label                */
+   "CURSOR = " here+1
+end                                    /* forever                    */
+
+rc = Trace('O'); rc = Trace( tv )
+rtnlist = STRSORT( rtnlist )
+
+do Words(rtnlist)
+   parse var rtnlist rtn rtnlist
+   say "("Left(rtn,15)")" called_by.rtn
+end
+
+exit                                   /*@ CALLEDBY                  */

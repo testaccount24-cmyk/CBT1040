@@ -1,0 +1,17 @@
+/* REXX    ADDXREF    run COMPSTAT on this compiler listing to add ISPF
+                      statistics
+
+*/ arg argline                         /* pro-forma quick-start      */
+address TSO
+arg parms "((" opts
+opts = Strip(opts,"T",")")
+parse var opts "TRACE"  tv  .
+parse value tv "N"  with  tv .
+rc = Trace("O"); rc = Trace(tv)
+
+parse var parms dsn .
+dsn = Strip( dsn,,"'" )
+
+address ISPEXEC "EDIT DATASET('"dsn"') MACRO(compstat)"
+
+exit                                   /*@ ADDXREF                   */

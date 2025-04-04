@@ -1,0 +1,50 @@
+/* REXX    QJAM        Examines a compiler listing to see that all the
+                       statement numbers are present.  Missing statement
+                       numbers indicate 'too much function on the line'.
+
+           Written by Frank Clarke 20051017 rexxhead@yahoo.com
+
+     Impact Analysis
+.    SYSEXEC   SEGMENT
+
+     Modification History
+     20080124 fxc rc(1) at exit;
+
+*/
+address ISREDIT
+"MACRO (opts)"
+upper opts
+parse var opts "TRACE" tv .
+parse value tv "N" with tv .
+rc = Trace(tv)
+
+"SEGMENT LABELS"
+address ISPEXEC "VGET LBLLIST SHARED"
+parse var lbllist ".SRC" src_start . src_end .
+"LABEL" src_start "= .SB"
+"LABEL" src_end   "= .SE"
+
+"F 'Stmt LV NT' .sb .se"               /* header line                */
+"(text) = LINE .zcsr"
+stm_pos = Pos("Stmt",text) -1
+stm_end = Pos("LV"  ,text) -1
+"X ALL"
+"SEEK  P'#' LAST .sb .se" stm_end-1
+"(text) = LINE .zcsr"
+parse var text =(stm_pos) stm# =(stm_end)
+
+looking_for = stm#-1                   /* prev logical statement     */
+do ix = src_end   to src_start by -1   /* every line                 */
+   "SEEK  P'#' PREV X .sb .se" stm_end-1
+   if rc > 0 then leave
+   "(text) = LINE .zcsr"
+   parse var text =(stm_pos) stm# =(stm_end)
+   if stm# < looking_for then,
+      do
+      "XSTATUS .zcsr =  NX "
+      "FIND  P'#' NEXT   .sb .se" stm_end-1
+      end
+   looking_for = stm#-1                /* prev logical statement     */
+end                                    /* ix                         */
+
+exit  1                                /*@ QJAM                      */

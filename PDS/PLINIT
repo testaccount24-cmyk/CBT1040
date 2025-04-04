@@ -1,0 +1,60 @@
+/* REXX    PLINIT     Initialize PL/I declare
+*/
+address ISREDIT
+"MACRO (opts)"
+upper opts
+parse var opts "TRACE" tv .
+parse value tv "N" with tv .
+rc = Trace("O"); rc = Trace(tv)
+
+"(text) = LINE .zcsr"                  /* acquire text               */
+
+uptext = Translate(text)
+uptext = Translate(uptext , ' ' , "(;," )
+if ,
+   WordPos("BASED"      ,uptext) + ,
+   WordPos("BUILTIN"    ,uptext) + ,
+   WordPos("CONTROLLED" ,uptext) + ,
+   WordPos("CTL"        ,uptext) + ,
+   WordPos("DEF"        ,uptext) + ,
+   WordPos("DEFINED"    ,uptext) + ,
+   WordPos("ENTRY"      ,uptext) + ,
+   WordPos("INIT"       ,uptext) + ,
+   WordPos("POINTER"    ,uptext) + ,
+   WordPos("PTR"        ,uptext)   > 0 then exit
+
+quotept = Pos("'",text)
+if quotept > 0 then do                 /* picture string             */
+   farpt = Pos("'",text,quotept+1)
+   if farpt > quotept+1 then do
+      slug = Substr(text,quotept,farpt-quotept+1)
+      slug = Translate(slug,'bb'x,' ')
+      text = Substr(text,1,quotept-1)slug||Substr(text,farpt+1)
+      end                              /* fill quote                 */
+   end                                 /* quotept                    */
+if Pos('bb'x,text) > 1 then,
+   text = Translate(text,' ','bb'x)    /* restore                    */
+
+scpt = 0
+if Pos(",",text) > 0 then,
+   scpt = LastPos(",",text)
+if Pos(";",text) > 0 then,
+   scpt = Pos(";",text)
+
+if scpt > 0 then,
+   text = Substr(text,1,scpt-1)" init('')"Substr(text,scpt,1) ||,
+                                          Space(Substr(text,scpt+1),1)
+
+if Length(text) > 72  then do
+   extra = Length(text) - 72
+   extrapt = Pos(Copies(' ',extra),text,3)
+   text    = Substr(text,1,extrapt-1)Substr(text,extrapt+extra)
+   end                                 /* > 72                       */
+
+"LINE .zcsr = (text)"
+if rc = 4 then do                      /* truncated                  */
+   text = " "Space(text,1)
+   "LINE .zcsr = (text)"
+   end
+
+exit                                   /*@ PLINIT                    */
