@@ -1,0 +1,132 @@
+/* REXX    QSQL       Analyze all the SQL statements in a PL/I
+                      program.
+*/
+address ISREDIT
+"MACRO (opts)"
+signal on syntax
+upper opts
+parse var opts "TRACE" tv .
+parse value tv "N" with tv .
+parse value "0 0 0 0 0" with,
+            sqlct.   .
+parse value "SQL"          with,
+            verblist ,
+            tables.  ,
+            csrlist   slug     .
+rc = Trace(tv)
+
+"RESET"
+"X ALL"
+"F ALL ' SQL '"
+"F NX ' SQL ' FIRST"                   /* init                       */
+do forever
+   if rc > 0 then leave                /* not found                  */
+   "(text) = LINE .zcsr"               /* acquire text               */
+   "(l#)   = LINENUM .zcsr"
+   text = Strip(Substr(text,2,71))
+   if Word(text,1) = "SQL" then do
+      slug = text
+      "(xst) = XSTATUS" l#-1
+      if xst = "X" then,
+         "XSTATUS" l#-1 "= NX"
+      "(text) = LINE" l#-1             /* prev line                  */
+      text = Strip(Substr(text,2,71)) slug
+      end
+
+   slug  = Space(text,1)
+   call ZC_ZAPCOMM                     /*                           -*/
+   sqlpt = Wordpos("SQL",slug)
+
+   if Pos("EXEC SQL",slug) > 0 then do
+      sqlct.SQL = sqlct.SQL + 1
+      do while Pos(";",slug) = 0
+         l# = l# + 1
+         "(text) = LINE" l#            /* next line                  */
+         "(xst) = XSTATUS" l#
+         if xst = "X" then,
+            "XSTATUS" l# "= NX"
+         slug = slug Strip(Substr(text,2,71))
+      end                              /* while no semico            */
+      call ZC_ZAPCOMM                  /*                           -*/
+      slug = Strip(slug,,";")
+      verb = Word(slug,sqlpt+1)        /* EXEC SQL DECLARE...        */
+      if Wordpos(verb,verblist) = 0 then,
+         verblist = verblist verb
+      sqlct.verb = sqlct.verb + 1
+
+      select                           /*                            */
+         when Wordpos(verb,"DECLARE DCL") > 0 then do
+            token1 = Word(slug,sqlpt+2)      /* cursorname           */
+            token2 = Word(slug,sqlpt+3)      /* literal              */
+            if token2 = "CURSOR" then do
+               if Wordpos(token1,csrlist) = 0 then do
+                  csrlist = csrlist token1
+                  parse var slug "FROM" tbls "WHERE"
+                  tables.token1 = Space(tbls,1)
+                  end
+               end
+            end                        /* DCL                        */
+         otherwise nop
+      end                              /* SELECT                     */
+
+      end                              /* EXEC                       */
+
+   slug = ""
+   "F NX ' SQL ' NEXT"                 /* next                       */
+end                                    /* forever                    */
+
+do v# = 1 to Words(verblist)           /* each verb                  */
+   verb = Word(verblist,v#)            /* isolate                    */
+   note = Right(sqlct.verb,4) verb
+   "LINE_BEFORE 1 = NOTELINE (note)"
+end                                    /* verblist                   */
+ct = Words(csrlist) "Cursors"
+"LINE_BEFORE 1 = NOTELINE (ct)"
+"LINE_BEFORE 1 = NOTELINE (csrlist)"
+do Words(csrlist)
+   parse var csrlist csr csrlist       /* isolate                    */
+   tbls = "    "tables.csr
+   "LINE_BEFORE 1 = NOTELINE (csr)"
+   "LINE_BEFORE 1 = NOTELINE (tbls)"
+end                                    /* csrlist                    */
+"UP MAX"
+
+exit(1)                                /*@ QSQL                      */
+/*
+.  ----------------------------------------------------------------- */
+ZC_ZAPCOMM:                            /*@                           */
+
+   endcomm  = Pos("*/",slug)
+   strtcomm = Pos("/*",slug)
+   if endcomm > 0 then,
+      if strtcomm > 0 then,
+         if endcomm > strtcomm  then do  /* internal complete comment */
+            slug = Delstr(slug, strtcomm, endcomm-strtcomm+2)
+            call ZC_ZAPCOMM
+            end                        /*                            */
+         else do                       /* incomplete at start        */
+            slug = Delstr(slug,1,endcomm +1)
+            call ZC_ZAPCOMM
+            end                        /*                            */
+      else,                            /* incomplete at end          */
+         slug = Delstr(slug,1,endcomm +1)
+   else,                               /*                            */
+   if Pos("/*",slug) > 0 then,         /* comment-start only         */
+      slug = Delstr(slug, strtcomm)
+
+   slug = Space(slug,1)                /* squeeze                    */
+
+return                                 /*@ ZC_ZAPCOMM                */
+/*
+.  ----------------------------------------------------------------- */
+SYNTAX:                                /*@                           */
+   errormsg = exec_name "encountered REXX error" rc "in line" sigl":",
+                        errortext(rc)
+   say errormsg
+   zsigl = sigl
+   if sourceline() <> "0" then
+      say sourceline(zsigl)
+   rc = trace("O")
+   rc =  trace("?R")
+   nop
+exit                                   /*@ SYNTAX                    */

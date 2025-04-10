@@ -1,0 +1,75 @@
+/* REXX    PGFS       show all PL/I paragraph names
+
+         Syntax: PGFS <noexit>
+                      <noexit> "exclude any paragraph exits"
+
+*/
+address ISREDIT
+"macro (opts)"                         /* I'm a macro                */
+"(nested) = MACRO_LEVEL"
+nested = nested > 1
+upper opts
+if WordPos( "TRACE",opts ) > 0 then do
+   parse var opts front "TRACE" tv back
+   opts = front back
+   end
+else tv = 'N'
+rc = Trace( 'O' );  rc = Trace( tv )
+
+noexit=0; slash=1                      /* ensure values              */
+do i = 1 to Words(opts)                /* check for options          */
+   if Abbrev("NOEXIT" ,Word(opts,i),3) then noexit = 1
+end
+
+"F P'¬' LAST"
+"(lastrow,x) = CURSOR"
+"RESET"
+"X ALL"
+"F ALL PROC WORD"
+"F ALL PROCEDURE WORD"
+
+pgflist  = ""
+seq      = "FIRST"
+do forever
+   "F ' ' NX" seq
+   if rc > 0 then leave                /* no more to be found        */
+
+   seq = "NEXT"
+
+   "(here) = LINENUM .zcsr"
+   "(text) = LINE .zcsr"               /* acquire                    */
+   parse upper var text 2 front "PROC" back
+
+   if Right(strip(front),1) = ":" then,/* it's a PROC statement      */
+      do
+      parse var front pgfnm ":"        /* isolate                    */
+      pgflist = pgfnm pgflist          /* add to list                */
+      end
+   else "XSTATUS .zcsr = X"            /* exclude it                 */
+   "CURSOR = " here+1
+
+end                                    /* forever                    */
+rc = Trace('O'); rc = Trace(tv)
+address ISPEXEC "VPUT PGFLIST"
+if noexit then return 1
+
+do Words(pgflist)                      /* each name                  */
+   parse upper var pgflist pgfnm pgflist /* isolate                  */
+   "F LAST NX" pgfnm "WORD"
+   "(row,col) = CURSOR"
+   if row+1 > lastrow then leave       /* end of source              */
+   "CURSOR =" row+1                    /* next line                  */
+
+   do forever
+      "F NEXT" pgfnm "WORD"
+      if rc > 0 then leave             /* end of source ?            */
+
+      "(text) = LINE .zcsr"            /* acquire                    */
+      parse upper var text 2 front (pgfnm) back
+      if Pos("END",front) > 0 then leave   /* it's the END           */
+      "XSTATUS .zcsr = X"              /* exclude it                 */
+   end                                 /* forever                    */
+end                                    /* pgflist                    */
+"CURSOR = 1 1"                         /* go to top                  */
+
+exit  1                                /*@ PGFS                      */

@@ -1,0 +1,58 @@
+/*
+ PLIMACS        by Frank Clarke, rexxhead@yahoo.com
+
+ The REXX routines found here fall into several broad categories.
+ They are either (a) EXECs or (b) MACROs designed either (c) to
+ operate on PL/I code or (d) to operate on PL/I compiler listings.
+
+ Some of these routines need code that is NOT bundled with the
+ remainder of FILE1040.  All such external code blocks will be found
+ on FILE433.  An example of that is TBLGEN.  If a routine complains
+ about not having essential code, it's on FILE433.
+
+ In addition, some routines have lately been made 'RUNDATA-aware';
+ that is: constants in a routine that may differ site-to-site (and
+ which need to be set at each such site) are now obtained from the
+ RUNDATA table via the use of REXX RUNDATA (q.v.).  So, instead of
+ laboriously customizing such RUNDATA-aware routines, an installer
+ places the necessary values on their local RUNDATA table and those
+ routines are permanently customized.  RUNDATA can be found on CBT
+ FILE1056.
+
+ As with FILE433, most of this is "REXXSKEL-based", referring to
+ member REXXSKEL on FILE433 that forms the backbone of the bulk of my
+ code.  All REXXSKEL-based code operates similarly: if the first token
+ passed as a parm is a question mark, the routine displays its
+ HELP-text (if such exists) and exits.  Parsing of parameters is
+ handled via a suite of embedded routines, KEYWD, SWITCH, and KEYPHRS
+ prime among them.  Arguments passed are divided by a double open
+ parentheses ("((") into 'parms' before and 'opts' after.  These may
+ be thought of as 'What shall we do?' and 'How shall we do it?' As a
+ general rule, naive users will not need to specify 'opts'.  Tracing
+ is controlled by a parameter in 'opts' such as:
+      ===> tso zork  (( trace ?r
+
+ Many routines exhibit a warning block at the top:
+   |**-***-***-***-***-***-***-***-***-***-***-***-***-***-***-***-**|
+   |                                                                 |
+   |          WARNING: EMBEDDED COMPONENTS.                          |
+   |                      See text following TOOLKIT_INIT            |
+   |                                                                 |
+   |**-***-***-***-***-***-***-***-***-***-***-***-***-***-***-***-**|
+ This identifies routines that carry (typically) ISPF assets such as
+ panels or skeletons that are used in the process.  COMPILE is a
+ complex example of this.  During installation, these elements
+ (especially skeletons) should be examined for necessary
+ pre-deployment changes.
+
+ Renumbering this code is not recommended.  HELP text typically
+ occupies all 80 columns, and any embedded panels or skeletons may
+ extend into the number field such that they will be ruined by
+ renumbering.
+
+ Most of the EXECs will carry an 'Impact Analysis' section near the
+ top that identifies external code elements used.  If the IA section
+ identifies code not in FILE1040, it's in FILE433.  RUNDATA is in
+ FILE1056.
+
+*/

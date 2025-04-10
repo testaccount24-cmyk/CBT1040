@@ -1,0 +1,231 @@
+/* REXX    IOSTMT      Shows all I/O statements (RECORD, STREAM, or
+                       both) in PL/I source.
+
+           Written by Frank Clarke 20080110 rexxhead@yahoo.com
+
+     Impact Analysis
+.    ...       ...
+
+     Modification History
+     20080224 fxc add support for ON-units and STREAM I/O;
+     20080226 fxc add OPEN and CLOSE;
+     20080603 fxc correct ON-processing;
+     20090327 fxc enable ADD;
+     20090401 fxc correct for already-shown last line;
+
+*/
+address ISREDIT
+"MACRO (opts)"
+upper opts
+sw.0Strm  = WordPos( "STREAM",opts ) > 0
+sw.0Rcd   = WordPos( "RECORD",opts ) > 0
+sw.0Clear = WordPos( "ADD"   ,opts ) = 0
+if sw.0Strm + sw.0Rcd = 0 then,        /* neither set                */
+   sw.0Rcd = 1
+parse var opts "TRACE" tv .
+parse value tv "N" with tv .
+rc = Trace("O"); rc = Trace(tv)
+if WordPos( "?",opts ) > 0 then,
+   call HELP                           /*                            */
+
+if sw.0Clear then,
+"X ALL"
+if sw.0Rcd then                        /* OK to do RECORD            */
+   do
+   pos = "FIRST"
+   tgt = "READ"
+   "F ALL WORD" tgt
+   if rc = 0 then,
+   do forever
+      "F WORD NX" tgt pos
+      if rc > 0 then leave
+      pos = "NEXT"
+      call X_EXPOSE_LINE               /*                            */
+   end                                 /* forever                    */
+                                       rc = Trace("O"); rc = Trace(tv)
+   pos = "FIRST"
+   tgt = "WRITE"
+   "F ALL WORD" tgt
+   if rc = 0 then,
+   do forever                          /*                            */
+      "F WORD NX" tgt pos
+      if rc > 0 then leave
+      pos = "NEXT"
+      call X_EXPOSE_LINE               /*                            */
+   end                                 /* forever                    */
+                                       rc = Trace("O"); rc = Trace(tv)
+   pos = "FIRST"
+   tgt = "REWRITE"
+   "F ALL WORD" tgt
+   if rc = 0 then,
+   do forever                          /*                            */
+      "F WORD NX" tgt pos
+      if rc > 0 then leave
+      pos = "NEXT"
+      call X_EXPOSE_LINE               /*                            */
+   end                                 /* forever                    */
+                                       rc = Trace("O"); rc = Trace(tv)
+   pos = "FIRST"
+   tgt = "DELETE"
+   "F ALL WORD" tgt
+   if rc = 0 then,
+   do forever                          /*                            */
+      "F WORD NX" tgt pos
+      if rc > 0 then leave
+      pos = "NEXT"
+      call X_EXPOSE_LINE               /*                            */
+   end                                 /* forever                    */
+                                       rc = Trace("O"); rc = Trace(tv)
+   pos = "FIRST"
+   tgt = "OPEN"
+   "F ALL WORD" tgt
+   if rc = 0 then,
+   do forever                          /*                            */
+      "F WORD NX" tgt pos
+      if rc > 0 then leave
+      pos = "NEXT"
+      call X_EXPOSE_LINE               /*                            */
+   end                                 /* forever                    */
+                                       rc = Trace("O"); rc = Trace(tv)
+   pos = "FIRST"
+   tgt = "CLOSE"
+   "F ALL WORD" tgt
+   if rc = 0 then,
+   do forever                          /*                            */
+      "F WORD NX" tgt pos
+      if rc > 0 then leave
+      pos = "NEXT"
+      call X_EXPOSE_LINE               /*                            */
+   end                                 /* forever                    */
+                                       rc = Trace("O"); rc = Trace(tv)
+   end
+
+pos = "FIRST"
+tgt = "ON"
+"F ALL WORD" tgt
+if rc = 0 then,
+do forever                             /*                            */
+      "F WORD NX" tgt pos
+   if rc > 0 then leave
+   pos = "NEXT"
+   call X_EXPOSE_LINE                  /*                            */
+end                                    /* forever                    */
+
+if sw.0Strm      then                  /* OK to do Stream I/O        */
+   do
+                                       rc = Trace("O"); rc = Trace(tv)
+   pos = "FIRST"
+   tgt = "PUT"
+   "F ALL WORD" tgt
+   if rc = 0 then,
+   do forever                          /*                            */
+      "F WORD NX" tgt pos
+      if rc > 0 then leave
+      pos = "NEXT"
+      call X_EXPOSE_LINE               /*                            */
+   end                                 /* forever                    */
+                                       rc = Trace("O"); rc = Trace(tv)
+   pos = "FIRST"
+   tgt = "GET"
+   "F ALL WORD" tgt
+   if rc = 0 then,
+   do forever                          /*                            */
+      "F WORD NX" tgt pos
+      if rc > 0 then leave
+      pos = "NEXT"
+      call X_EXPOSE_LINE               /*                            */
+   end                                 /* forever                    */
+   end
+
+"UP MAX"
+exit 1                                 /*@ IOSTMT                    */
+/*
+.  ----------------------------------------------------------------- */
+X_EXPOSE_LINE:                         /*@                           */
+   address ISREDIT
+
+   sw.0killLoop = 0
+   "(rl) = CURSOR"                     /* where are we?              */
+   "SEEK ';'"
+   "(sl) = CURSOR"                     /* end of statement           */
+   text = ""
+   stmt = ""
+   do zz = rl to sl
+      "(xst) = XSTATUS" zz
+      if xst = "NX" & zz > rl  then do
+         sw.0killLoop = 1
+         leave
+         end
+      if sw.0killLoop then leave
+      "(text) = LINE" zz
+      text = Substr( text,2,71 )
+      stmt = stmt Strip( text )
+      if Length( stmt ) > 100 then leave
+   end                                 /* zz                         */
+   zz = Min( zz,sl )
+
+   upper stmt
+   wordct = WordPos( " ON ",stmt ) +,
+            WordPos( " GET ",stmt ) +,
+            WordPos( " PUT ",stmt )
+
+   if Pos( "FILE(",Space( stmt,0 ) ) > 0 then,
+      do zz = rl to sl
+         "XSTATUS" zz "= NX"           /* show it                    */
+      end
+   else
+   if Length( Strip( stmt ) ) > 100 then
+      do z2 = rl to zz
+         "XSTATUS" z2 "= X"            /* hide it                    */
+         "CURSOR ="   z2 "72"
+      end
+   else
+   if wordct            = 1 &,
+      Pos( "("  ,stmt ) > 0 then,
+      do z2 = rl to zz
+         "XSTATUS" z2 "= NX"           /* show it                    */
+      end
+   else
+      do z2 = rl to zz
+         "XSTATUS" z2 "= X"            /* hide it                    */
+      end
+
+return                                 /*@ X_EXPOSE_LINE             */
+/*
+.  ----------------------------------------------------------------- */
+HELP:                                  /*@                           */
+address TSO;"CLEAR"
+parse source  .  .  exec_name  .
+ex_nam = Left(exec_name,8)             /* predictable size           */
+say "                                                                          "
+say "  "ex_nam"      Display all I/O statements in a PL/I program.             "
+say "                                                                          "
+say "  Syntax:   "ex_nam"  RECORD                                  (Default)   "
+say "                      STREAM                                              "
+say "                      ADD                                                 "
+say "                                                                          "
+say "            RECORD/   specifies that I/O statements for RECORD files or   "
+say "            STREAM    STREAM files or both are to be shown along with     "
+say "                      any identifiable ON-statements.  If neither is      "
+say "                      specified, RECORD is implied.                       "
+say "                                                                          "
+say "            ADD       skips the initial 'X ALL'                           "
+say "                                                                          "
+"NEWSTACK"; pull ; "CLEAR" ; "DELSTACK"
+say "   Debugging tools provided include:                                      "
+say "                                                                          "
+say "        TRACE tv: will use value following TRACE to place the execution in"
+say "                  REXX TRACE Mode.                                        "
+say "                                                                          "
+say "                                                                          "
+say "   Debugging tools can be accessed in the following manner:               "
+say "                                                                          "
+say "        TSO "ex_nam"  parameters     ((  debug-options                    "
+say "                                                                          "
+say "   For example:                                                           "
+say "                                                                          "
+say "        TSO "ex_nam"  (( trace ?r                                         "
+
+if sysvar("SYSISPF") = "ACTIVE" then,
+address ISPEXEC "CONTROL DISPLAY REFRESH"
+exit                                   /*@ HELP                      */

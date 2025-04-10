@@ -1,0 +1,40 @@
+/* REXX    SPLITDO      Splits instances of 'if ...  then do;' in PL/I
+                        code to place the DO on the next line.  The
+                        'DO' is the logical start of the next
+                        statement, and the Enterprise compiler will
+                        count -two- statements for 'if ... do' on the
+                        same line.
+*/
+address ISREDIT
+"MACRO (opts)"
+upper opts
+parse var opts "TRACE" tv .
+parse value tv "N" with tv .
+rc = Trace(tv)
+
+sw.continuous = WordPos("ALL",opts) > 0     /* if it says 'all'...   */
+
+recycle:
+"(irow,icol) = CURSOR"                 /* where am I ?               */
+"F NEXT 'then do' "
+if rc > 0 then trow = 'ff'x            /* max                        */
+else
+   "(trow,tcol) = CURSOR"              /* where am I ?               */
+
+"CURSOR =" irow icol
+"F NEXT 'else do' "
+if rc > 0 then erow = 'ff'x            /* max                        */
+else
+   "(erow,ecol) = CURSOR"              /* where am I ?               */
+
+if trow = 'ff'x  then,
+if erow = 'ff'x  then exit             /* all done                   */
+
+if trow < erow then "CURSOR =" trow tcol
+               else "CURSOR =" erow ecol     /* position the cursor  */
+"F 'do' word"                          /* find the DO                */
+"TSPLIT"
+
+if sw.continuous then signal recycle
+
+exit                                   /*@ SPLITDO                   */

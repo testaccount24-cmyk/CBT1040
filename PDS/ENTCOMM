@@ -1,0 +1,60 @@
+/* REXX    ENTCOMM    Change END-statements from "<labelname> within
+                      comment markers" to "END LABELNAME;"
+
+           Impact Analysis
+.          SYSEXEC   PLILBLS
+
+     Modification History
+     20030820 fxc cloned from ENDCOMM;
+     20041019 fxc ignore LBLLIST;
+     20080124 fxc rc(1) at exit;
+
+*/
+address ISREDIT
+"MACRO (opts)"
+upper opts
+parse var opts "TRACE" tv .
+parse value tv "N" with tv .
+rc = Trace("O") ; rc = Trace(tv)
+
+"RENUM"
+"UNNUM"
+"X ALL"
+"PLILBLS ENTRIES NOCALLS"              /* reduce to labels-only      */
+/* address ISPEXEC "VGET (LBLLIST) PROFILE" */
+
+firstornext = "FIRST"
+
+do forever
+   "F 'END'  " firstornext  "NX"       /* END                        */
+   if rc > 0 then leave                /* didn't find one            */
+   "(text) = LINE .zcsr"               /* capture text               */
+   parse var text asa 2 text
+
+   Upper text
+   if Word(text,1) = "END"  |,
+      Word(text,1) = "END;" then do    /* it's an END-statement      */
+                                       rc = Trace("O") ; rc = Trace(tv)
+      endpos = Pos("END",text)         /* where does it start ?      */
+      parse var text "END" label ";" tail 73 . /* clip label         */
+      if label = "" then do
+         label = tail
+         tail  = ""
+         end
+
+      if Pos("/*",label) > 0 then do   /* commented                  */
+         parse var label "/*" label "*/"
+         text = asa""Copies(" ",endpos-1) || "END",
+                label ";"     Strip(tail,"T")
+         "LINE .zcsr = (text)"         /* replace                    */
+         "CURSOR = .zcsr 80"           /* prevent RFIND              */
+         end                           /* label has no comment       */
+
+      end                              /* first word is END          */
+   else "XSTATUS .zcsr = X"            /* exclude this line          */
+   firstornext = "NEXT"
+end                                    /* forever                    */
+
+"CURSOR = 1 1"
+
+exit(1)                                /*@ ENTCOMM                   */

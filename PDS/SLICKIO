@@ -1,0 +1,147 @@
+/* REXX    SLICKIO    Make the FILE declarations in a PL/I program line
+                      up neatly.
+
+           Written by Frank Clarke 20070316 rexxhead@yahoo.com
+
+     Impact Analysis
+.    SYSEXEC   QIO
+
+     Modification History
+     20070509 fxc oops... forgot 'VARIABLE'...;
+     20070711 fxc correct parsing of ENV_STRING;
+     20080114 fxc keep EXTERNAL;
+     20240728 fxc fix I/A;
+
+*/
+address ISREDIT
+"MACRO (opts)"
+upper opts
+parse var opts "TRACE" tv .
+parse value tv "N" with tv .
+rc = Trace(tv)
+
+pos = "FIRST"
+"QIO"                                  /* runs the QIO macro         */
+do forever
+   "F 'DECLARE' NX" pos
+   if rc > 0 then leave                /* didn't find it             */
+   "(text) = LINE" .zcsr
+   parse var text  front "DECLARE" back
+   text = " "Strip( front "DCL" back )
+   "LINE" .zcsr "= (text)"
+   pos = "NEXT"
+end                                    /* forever                    */
+
+pos = "FIRST"
+do forever
+   "F 'DCL' NX" pos
+   if rc > 0 then leave                /* didn't find it             */
+   pos = "NEXT"
+   "(dcl#,x) = CURSOR"
+   "F ';' "
+   "(sco#,x) = CURSOR"
+   info = ""
+   do zz = dcl# to sco#
+      "(text) = LINE" zz
+      info = info || Strip(text,"T")
+   end                                 /* zz                         */
+   info = Strip(info,"T",";")
+   upper info
+   call R_REFORMAT                     /*                            */
+   "LINE" dcl# "= (text)"
+   if dcl# < sco# then,
+      do zz = dcl#+1 to sco#
+         "DELETE" zz
+      end                              /* zz                         */
+
+end                                    /* forever                    */
+"UP MAX"
+
+exit  1                                /*@ SLICKIO                   */
+/*
+   INFO is a single DCL for one file without a semicolon.
+.  ----------------------------------------------------------------- */
+R_REFORMAT:                            /*@                           */
+   address ISREDIT
+
+   txt. =
+   env_string = ""
+   pt  = Pos(" ENV",info)
+   if pt > 0 then do                   /* parse out ENV              */
+      call RE_ISOLATE_ENV              /*                           -*/
+      end                              /* pt>0 end                   */
+
+   parse var info "DCL" filename info
+   filename = Strip( filename,,")" )
+   filename = Strip( filename,,"(" )
+   do while info <> ""
+      parse var info token info
+      txt.token = token
+   end                                 /* info                       */
+
+   text = "   DCL" Left(filename,8) "FILE"
+
+   if txt.PRINT <> "" then txt.STREAM = "STREAM"
+   r_or_s = Space(txt.RECORD txt.STREAM,0)
+   text = text Left(r_or_s,6)
+
+   iouv   = Space(txt.VARIABLE txt.INPUT  txt.OUTPUT txt.UPDATE,0)
+   text = text Left(iouv,8)
+
+   if txt.PRINT <> "" then,
+   text = text Left(txt.PRINT,5)
+
+   if txt.EXTERNAL <> "" then,
+   text = text Left(txt.EXTERNAL,8)
+
+   if txt.SEQUENTIAL <> "" then txt.SEQL = "SEQL"
+   if txt.SEQL  <> "" then,
+   text = text Left(txt.SEQL,4)
+
+   if txt.KEYED <> "" then,
+   text = text Left(txt.KEYED,5)
+
+   if txt.DIRECT <> "" then,
+   text = text Left(txt.DIRECT,6)
+
+   if env_string <> "" then,
+   text = text "ENV("env_string")"
+
+   text = text ";"
+
+return                                 /*@ R_REFORMAT                */
+/*
+.  ----------------------------------------------------------------- */
+RE_ISOLATE_ENV:                        /*@                           */
+   address TSO
+
+   parse var info front "ENV" "(" back
+   back = Strip(back)
+   dlmstak = "("                       /* the opening banana         */
+   do zz = 1 to Length(back) until dlmstak = ""
+      if Substr( back,zz,1 ) = ")" then,
+         if Left( dlmstak,1 ) = "(" then,
+            dlmstak = Delstr( dlmstak,1,1 )
+         else nop
+      else,
+      if Substr( back,zz,1 ) = "(" then,
+         dlmstak = "("dlmstak
+      else,
+      if Substr( back,zz,1 ) = "'" then,
+         if Left( dlmstak,1 ) = "'" then,
+            dlmstak = Delstr( dlmstak,1,1 )
+         else dlmstak = "'"dlmstak
+   end                                 /* zz                         */
+
+   if dlmstak <> "" then do            /* !!!                        */
+      say "Parse error in the ENV section for"
+      say info
+      sw.0error_found = 1
+      end
+   else do
+      env_string = Left( back,zz-1 )
+      back       = Delstr( back,zz )
+      end
+   info = front back
+
+return                                 /*@ RE_ISOLATE_ENV            */

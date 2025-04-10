@@ -1,0 +1,63 @@
+/* REXX    WHATINC    returns via the queue a string containing all
+                      the objects of "%INCLUDE" found in the source.
+*/
+address ISREDIT
+"MACRO (opts)"
+upper opts
+parse var opts "TRACE" tv .
+parse value tv "N" with tv .
+if tv = "N" then do
+   address ISPEXEC "VGET EMTV ASIS"
+   parse value emtv "N" with tv .
+   end
+rc = Trace( 'O' ) ; rc = Trace(tv)
+
+"X ALL"
+"F ALL '%INC'"
+
+inclist = ""
+point = "FIRST"
+do forever
+   "F '%INC' NX" point                 /* next step                  */
+   if rc > 0 then leave
+
+   point = "NEXT"
+   "LABEL .zcsr = .HERE 0"
+   "(txt) = LINE .zcsr"
+
+   parse var txt  txt 72
+
+   do until (startcomm+endcomm) = 0
+      startcomm = Pos('615c'x,txt)
+      endcomm   = Pos('5c61'x,txt)
+      if startcomm + endcomm > 0 then do
+         if startcomm > endcomm |,     /* prior-comment-end          */
+            startcomm = 0 then,        /* comment-end only           */
+            if endcomm > 0 then,       /* prior-comment-end          */
+               txt = Delstr(txt,1,endcomm+1)
+            else,                      /* no comment-end             */
+               txt = Delstr(txt,startcomm)
+         else,
+         if endcomm = 0 then,          /* comment-start only         */
+            txt = Delstr(txt,startcomm)
+         else,
+         if startcomm < endcomm then,  /* normal comment             */
+            txt = Delstr(txt,startcomm,endcomm+1)
+         end                           /* found comment              */
+   end
+
+   if Wordpos("%INCLUDE",txt) > 0 then,
+      parse var txt "%INCLUDE" incname .
+   else,
+      parse var txt "%INC" incname .
+
+   incname = Translate(incname,"   ","(;)")
+   inclist = inclist Strip(incname)
+
+   "XSTATUS .here = X"
+end                                    /* forever                    */
+
+queue inclist
+"CANCEL"
+
+exit                                   /*@ WHATINC                   */

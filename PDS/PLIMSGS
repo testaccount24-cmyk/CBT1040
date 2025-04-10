@@ -1,0 +1,120 @@
+/* REXX    PLIMSGS    adds error messages in-line with the compiler
+                      listing.  This driver will determine which
+                      compiler produced the listing and call either
+                      PLIMSGO (if the Optimizing compiler) or
+                      PLIMSGE (if the Enterprise compiler).
+
+     Impact Analysis
+.    SYSEXEC   PLIMSGE
+.    SYSEXEC   PLIMSGO
+
+           Written by Frank Clarke 20010307 rexxhead@yahoo.com
+
+     Modification History
+     20010717 fxc don't sort if only 1 token;
+     20030723 fxc split for Optimizer/Enterprise
+     20040427 fxc monitor with SYSUMON
+     20060915 fxc enable for CICS modules
+     20081203 fxc monitor with SYSPMON;
+     20231128 fxc only examine 5 bytes to identify the compiler;
+     20240503 fxc change $ to @ everywhere; adjust HELP;
+     20240728 fxc panel name for error msg;
+
+*/
+address ISREDIT
+"MACRO (opts)"
+
+if Left(Strip(opts),1) = "?" then call HELP        /*               -*/
+
+"RESET"
+"F '15655'     FIRST"
+if rc = 0 then newmac = "PLIMSGE"
+else do
+   "F '15668'     FIRST"
+   if rc = 0 then newmac = "PLIMSGO"
+   else do
+      zerrhm   = "ISR00000"
+      zerralrm = "YES"
+      zerrsm   = "Unknown compiler"
+      zerrlm   = "The header information on this listing cannot be ",
+                 "mapped to a recognized compiler."
+      address ISPEXEC "SETMSG MSG(ISRZ002)"
+      return                           /* halt processing            */
+      end
+   end
+
+address ISREDIT (newmac) opts
+zcmd = "&L NEXT SPECIAL"
+
+exit                                   /*@ PLIMSGS                   */
+/*
+.  ----------------------------------------------------------------- */
+HELP:                                  /*@                           */
+address TSO;"CLEAR" ; say ""
+parse source  sys_id  how_invokt  exec_name  .
+ex_nam = Left(exec_name,8)             /* predictable size           */
+
+say "  "ex_nam"      places PL/1 compiler diagnostic messages in-line with the "
+say "                source listing.  External subroutine PLIMSGO handles      "
+say "                Optimizer listings; PLIMSGE handles Enterprise listings.  "
+say "                                                                          "
+say "  Syntax:   "ex_nam"  <LOG>                                               "
+say "                      <HIDE list>                                         "
+say "                      <PREVIEW>                         (Enterprise only) "
+say "                                                                          "
+say "            LOG       causes a log file to be produced showing the        "
+say "                      actions taken during execution.                     "
+say "                                                                          "
+say "            list      a string composed of the letters I, W, E, and S.    "
+say "                      Messages of the indicated severity will be ignored. "
+say "                                                                          "
+say "            PREVIEW   presents the list of found MSGIDs for selection. Any"
+say "                      shown messages may be marked for exclusion and will "
+say "                      be ignored.  PLIMSGS normally excludes certain      "
+say "                      high-volume and/or low-impact messages.             "
+"NEWSTACK"; pull; "CLEAR"; "DELSTACK"
+say "                                                                          "
+say "   Debugging tools provided include:                                      "
+say "                                                                          "
+say "        TRACE tv: will use value following TRACE to place the execution in"
+say "                  REXX TRACE Mode.                                        "
+say "                                                                          "
+say "                                                                          "
+say "   Debugging tools can be accessed in the following manner:               "
+say "                                                                          "
+say "           " ex_nam "    parameters    debug-options                      "
+say "                                                                          "
+say "   For example:                                                           "
+say "                                                                          "
+say "           " ex_nam " (( TRACE ?R                                         "
+
+if sysvar("SYSISPF") = "ACTIVE" then,
+address ISPEXEC "CONTROL DISPLAY REFRESH"
+exit                                   /*@ HELP                      */
+/*
+.  ----------------------------------------------------------------- */
+ZB_SAVELOG:                            /*@                           */
+   address TSO
+
+   if Symbol("LOG#") = "LIT" then return          /* not yet set     */
+
+   "ALLOC FI(@LOG) DA("logdsn") REU" vb4k.0
+   "EXECIO" log# "DISKW @LOG (STEM LOG. FINIS"
+   "FREE  FI(@LOG)"
+
+return                                 /*@ ZB_SAVELOG                */
+/*
+.  ----------------------------------------------------------------- */
+ZL_LOGMSG: Procedure expose,           /*@                           */
+   (tk_globalvars)  log. log#
+   rc = Trace("O")
+   address TSO
+
+   parse arg msgtext
+   parse value  log#+1  msgtext     with,
+                zz      log.zz    1  log#   .
+
+   if monitor then say,
+      msgtext
+
+return                                 /*@ ZL_LOGMSG                 */

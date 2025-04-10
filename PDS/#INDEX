@@ -1,0 +1,92 @@
+
+         'FCLARKE.PLIMACS.EXEC' - Directory
+
+           Usage or
+ Member    Caller      Description
+ ========  =========   =====================================
+
+ $$$#DATE  data        Download stats
+
+ #INDEX    data        This member
+
+ @@README  text        About the material in this library
+
+ @FIL1040  text        Inventory
+
+ @PLIEXMP  PLI         The pro-forma pattern for a new PLI paragraph
+
+ ADDXREF   exec        Add ISPF statistics to a compiler listing
+
+ ALLPLIB   macro       Queue all PLIBs from the listing dataset
+
+ CALLEDBY  macro       CALLs and their targets
+
+ COMBINE   exec        Combine 2 or more datasets with incompat DCBs
+
+ COMPARM   exec        Maintain parameters for COMPILE
+
+ COMPDT    exec        Reports the compile-date for LOAD modules
+
+ COMPILE   exec        Background compile of foreground source
+
+ COMPSTAT  macro       For listings, sets member stats
+
+ DENUM     macro       Denumber source in listing dataset
+
+ ELEMENTS  macro       For listings, display Attribute list
+
+ ELEMLEN   exec        Calc storage needed for a variable
+
+ ENTCOMM   macro       Adjust END statements for Enterprise compiler
+
+ IOSTMT    macro       Show all I/O statements
+
+ LCOMM     macro       Insert line comment
+
+ ONEPERLN  macro       Splits PL/I source lines
+
+ PARSEDCL  macro       Annotate structure DCL with column info
+
+ PGFS      macro       Show all paragraph names
+
+ PLIFLOW   macro       Shows CALLs, GOTOs, and targets
+
+ PLILBLS   macro       Like PLIFLOW; show labels and referents
+
+ PLIMSGE   macro       Puts error msgs in-line on listings (Enterprise)
+
+ PLIMSGO   macro       Puts error msgs in-line on listings (Optimizer)
+
+ PLIMSGS   macro       Driver for PLIMSGE and PLIMSGO
+
+ PLINIT    macro       Adds initialization to PL/I DCL
+
+ PLIPARA   macro       Insert new empty paragraph
+
+ PLIPOS    macro       Similar to PARSEDCL
+
+ PLISKIP   macro       Replace carr-ctl with preprocessor cmds
+
+ PLIXREF   macro       Adds stmt# refs to a listing (driver)
+
+ PLIXREFE  macro       ~~ for Enterprise
+
+ PLIXREFO  macro       ~~ for Optimizer
+
+ QIO       macro       Find and count all files by type
+
+ QJAM      macro       Check that all stmt#s are present
+
+ QSQL      macro       Analyze all the SQL statements
+
+ SEGMENT   macro       Label start and end of compiler sections
+
+ SHORTPG   macro       Excise spurious blank line from listing
+
+ SLICKIO   macro       (Source) align all file DCLs
+
+ SPLITDO   macro       Split if...do
+
+ TRIMPLI   macro       Excise billions of SQL junk from listing
+
+ WHATINC   macro       Return on stack all %INC object names

@@ -1,0 +1,1179 @@
+/* REXX    COMPILE    Setup and submit JCL to compile and link the
+                      current member.  For optimum operation there
+                      should be a command in the command table whose
+                      action is
+               SELECT CMD(%COMPILE |&ZDSN |&ZMEM |&ZMEMB |&ZPARM )
+                      This allows you to issue the command "COMPILE"
+                      while in edit causing a background job to be
+                      submitted to compile/link the instant source.
+           Use '(routine name)  ?' for HELP-text.
+   |**-***-***-***-***-***-***-***-***-***-***-***-***-***-***-***-**|
+   |                                                                 |
+   |          WARNING: EMBEDDED COMPONENTS.                          |
+   |                      See text following TOOLKIT_INIT            |
+   |                                                                 |
+   |**-***-***-***-***-***-***-***-***-***-***-***-***-***-***-***-**|
+
+           Written by Frank Clarke  rexxhead@yahoo.com   20010621
+
+     Impact Analysis
+.    SYSEXEC   COMPARM
+.    SYSEXEC   FCCMDUPD
+.    SYSEXEC   JOBCARDS
+.    SYSEXEC   RUNDATA
+.    SYSEXEC   TRAPOUT
+
+     Modification History
+     20230524 fxc clean-up
+     20230725 fxc correctly set LPAR;
+     20230726 fxc adjust HELP;
+     20230911 fxc use ZUP/ZCONT in HELP panels;
+     20231119 fxc add logging; upgrade HELP;
+     20231120 fxc bring required datasets into the REXX body;
+     20240229 fxc remove imbeds from I/A;
+     20240305 fxc align panel names;
+     20240308 fxc chg dollar-sign to @ everywhere;
+     20240321 fxc reflect change from CBT001.U to CBT.U;
+     20240423 fxc DUMP_QUEUE quiet;
+     20240527 fxc enable RUNDATA; get all required DSNs from RUNDATA;
+     20241107 fxc allow 8-character userids;
+
+*/ arg argline
+if argline = "" then do                /* no command table?          */
+   address TSO
+   "CLEAR"
+   say
+   say "COMPILE cannot proceed because there is no data to process."
+   say
+   say "You may not have a command-table entry with the proper"
+   say "configuration, or you may not have loaded your command table."
+   say
+   say "If you have a command table and it has been loaded, you should"
+   say "install COMPILE by issuing the following command inside ISPF:"
+   say
+   say "   ===> tso compile (( install "
+   say
+   say "then immediately reload your command table."
+   say
+   say "COMPILE can only be exercised via a command-table entry.  If  "
+   say "you do not have a command table, you cannot run this routine. "
+   "NEWSTACK";pull;"DELSTACK"
+   "CLEAR"
+   exit
+   end
+address ISPEXEC                        /* REXXSKEL ver.20010524      */
+arg parms "((" opts
+
+signal on syntax
+signal on novalue
+
+call TOOLKIT_INIT                      /* conventional start-up     -*/
+rc     = trace(tv)
+info   = parms                         /* to enable parsing          */
+"CONTROL ERRORS RETURN"                /* I'll handle my own         */
+address TSO
+
+call A_INIT                            /*                           -*/
+call B_TAILOR                          /*                           -*/
+
+if sw.0Log | sw.0Error_Found then,
+   call ZB_SAVELOG                     /*                           -*/
+
+if \sw.nested then call DUMP_QUEUE 'quiet' /*                       -*/
+exit                                   /*@ COMPILE                   */
+/*
+   Initialization.  Setup JOB1L as the first job statement.
+.  ----------------------------------------------------------------- */
+A_INIT:                                /*@                           */
+   if branch then call BRANCH
+   address ISPEXEC
+
+   call AD_REQUIRED_DATASETS           /*                           -*/
+   call AL_SETUP_LOG                   /*                           -*/
+   parse var parms "|" srcds . "|" src "|" memb "|" info
+   if SWITCH("?") then call HELP       /* a lone q-mark in info      */
+   if SWITCH("INTEST") then swintst = "Y"; else swintst = "N"
+   if SWITCH("TEMPSL") then swstepl = "Y"; else swstepl = "N"
+   if SWITCH("NOINIT") then swdinit = "N"; else swdinit = "Y"
+   parse value src memb       with src .
+
+   parse value "" with ,
+         cpcics cpclass cplib cplist cproot
+   parse value 'EF'x with ,
+         xef .
+
+   alpha = "ABCDEFGHIJKLMNOPQRSTUVWXYZA"
+   "VGET JOB1L ASIS"                   /* jobcard                    */
+   if job1l = "" then do
+      "VGET JOB1 ASIS"                 /* get standard jobcard       */
+      if rc > 0 then do                /* not found?                 */
+         address TSO "JOBCARDS"        /* setup initial set          */
+         "VGET JOB1 ASIS"
+         end                           /* JOB1 not found             */
+      job1l = job1
+      end                              /* JOB1L not found            */
+   parse var job1l w1 rest             /* //SMITHF  ...              */
+   tag  = Right( job1l,1 )             /* F                          */
+   pt   = Pos( tag,alpha )             /* 6                          */
+   tag  = Substr( alpha,pt+1,1 )       /* G                          */
+   job1l = "//"Userid()tag rest        /* reconstruct                */
+   "VPUT JOB1L PROFILE"                /* save it                    */
+   logpref = "("Branch("ID")")"
+   call ZL_LOGMSG( logpref "JOB1L:" job1l )
+
+   date4 = Translate( "CcYy/Mm/Dd", yyyymmdd, "CcYyMmDd")
+   date2 = Right(date4,8)              /* yy/mm/dd                   */
+   ccyy  = Left( yyyymmdd,4 )          /* used for copyright         */
+
+return                                 /*@ A_INIT                    */
+/*
+   Name the required datasets for a compile/link.
+.  ----------------------------------------------------------------- */
+AD_REQUIRED_DATASETS:                  /*@                           */
+   if branch then call BRANCH
+   address TSO
+
+   logpref = "("Branch("ID")")"
+   dsnlist = SDFHLINK SDFHLOAD SDFHMAC SDFHSAMP SYSUEXIT SCEELKED,
+             SCEESAMP SYSPROC CTLCARD
+   if WordPos( '???',dsnlist ) > 0 then do
+      call ZL_LOGMSG( logpref "Required datasets:",
+                  SDFHLINK SDFHLOAD SDFHMAC SDFHSAMP SYSUEXIT SCEELKED,
+                  SCEESAMP SYSPROC CTLCARD )
+      sw.0Error_Found = 1
+      end
+
+return                                 /*@ AD_REQUIRED_DATASETS      */
+/*
+.  ----------------------------------------------------------------- */
+AL_SETUP_LOG:                          /*@                           */
+   if branch then call BRANCH
+   address TSO
+
+   parse value "0 0 0 0 0" with,
+                log#    log.  .
+   parse value Date("S")  Time("S")  Time("N")  Time()  with,
+               yyyymmdd   sssss      hhmmss     time_c  .
+   hhmmss = Space( Translate( hhmmss,' ',':' ) ,0 )
+   parse var yyyymmdd  4 yrdigit 5 mm 7 dd          /* 9 12 14 maybe */
+   if Pos(yrdigit,"13579") > 0 then mm = mm + 12       /* mm=24      */
+   logtag = Substr("ABCDEFGHIJKLMNOPQRSTUVWX",mm,1)    /* logtag=X   */
+   subid  = logtag""dd""Left(  hhmmss,4 )              /* X141743  ? */
+   vb4k.0    = "NEW CATALOG UNIT(SYSDA) SPACE(1 5) TRACKS",
+               "RECFM( V B ) LRECL( 255 ) BLKSIZE( 0 )"
+   vb4k.1    = "MOD"                   /* if it already exists...    */
+   logdsn = "@LOG."exec_name"."subid".LIST"
+
+   logpref = "("Branch("ID")")"
+   call ZL_LOGMSG( exec_name "started by" Userid()  yyyymmdd  hhmmss )
+   call ZL_LOGMSG( logpref "Arg:" argline )
+
+return                                 /*@ AL_SETUP_LOG              */
+/*
+   Customize the JCL
+.  ----------------------------------------------------------------- */
+B_TAILOR:                              /*@                           */
+   if branch then call BRANCH
+   address ISPEXEC
+
+   call BA_SETUP_LIBDEFS               /*                           -*/
+   call BJ_BUILD_JCL                   /*                           -*/
+   call BZ_DROP_LIBDEFS                /*                           -*/
+
+return                                 /*@ B_TAILOR                  */
+/*
+   Deimbed and attach the ISPF material
+.  ----------------------------------------------------------------- */
+BA_SETUP_LIBDEFS:                      /*@                           */
+   if branch then call BRANCH
+   address ISPEXEC
+
+   call DEIMBED                        /* extract ISPF elements     -*/
+   dd = ""
+   do Words(ddnlist)                   /* each LIBDEF DD             */
+      parse value ddnlist dd with dd ddnlist
+      @ddn   = @ddn.dd                 /* PLIB322 <- PLIB            */
+      "LIBDEF  ISP"dd "LIBRARY  ID("@ddn") STACK"
+   end
+   ddnlist = ddnlist dd
+
+return                                 /*@ BA_SETUP_LIBDEFS          */
+/*
+   File-tailor the skeleton to compile and link the source and store
+   the listings in a library.  Submit the JCL.
+.  ----------------------------------------------------------------- */
+BJ_BUILD_JCL:                          /*@                           */
+   if branch then call BRANCH
+   address ISPEXEC
+
+   mbr.   = "?"   /* PROCESS statements to be prefaced to the source */
+/* mbr.YO = "PROCICS"         */       /* CICS Optimizer             */
+   mbr.YE = "ENTCICS"                  /* CICS Enterprise            */
+/* mbr.NO = "PROCESS"     */           /* non-CICS Optimizer         */
+   mbr.NE = "PROCENT"                  /* non-CICS Enterprise        */
+   mbrstring = "ENTCICS PROCENT"
+
+   call BJA_OUTPUT_WHERE               /* what load and list locns? -*/
+   if sw.0error_found then return      /* Oops...                    */
+   if swstepl = "Y" then,
+      call BJB_GET_OVERRIDES           /*                           -*/
+
+   set = Space(swcics "E"   ,0)        /* yo, YE, no, NE             */
+   procmbr = mbr.set                   /* ENTCICS, maybe             */
+   procds  = srcds"("procmbr")"
+   itstds  = srcds"(INTEST)"           /* NOSTMT for InterTest       */
+   logpref = "("Branch("ID")")"
+   /*
+   call ZL_LOGMSG( logpref "PROCDS:" procds )
+   call ZL_LOGMSG( logpref "LISTDS:" listds )
+   call ZL_LOGMSG( logpref "JOB1L :" job1l  )
+   call ZL_LOGMSG( logpref "JOB2  :" job2   )
+   call ZL_LOGMSG( logpref "JOB3  :" job3   )
+   call ZL_LOGMSG( logpref "JOB4  :" job4   )
+   call ZL_LOGMSG( logpref "LPAR  :" lpar   )
+   call ZL_LOGMSG( logpref "SWCICS:" swcics )
+   call ZL_LOGMSG( logpref "SRCDS :" srcds  )
+   call ZL_LOGMSG( logpref "SRC   :" src    )
+   */
+
+   "FTOPEN TEMP"
+   "FTINCL COMPILE"                    /* customize JCL              */
+   if rc > 0 then do
+      "SETMSG  MSG(ISRZ002)"
+      sw.0error_found = "1"
+      end                              /* FTINCL error               */
+   "FTCLOSE"
+   if rc > 0 then do
+      "SETMSG  MSG(ISRZ002)"
+      sw.0error_found = "1"
+      end                              /* FTCLOSE error              */
+
+   if sw.0error_found then return      /* Oops...                    */
+
+   "VGET (ZTEMPF ZTEMPN)"
+   if modify then do
+      "LMINIT DATAID(DDNID) DDNAME("ztempn")"
+      zerrsm = "Submit-it-yourself"
+      zerrlm = "This JCL will -NOT- be automatically submitted when",
+               "EDIT completes.  If you want the JOB to run",
+               "you must issue the SUBMIT command before leaving",
+               "this edit session."
+      "SETMSG  MSG(ISRZ002)"
+      "EDIT DATAID("ddnid") PROFILE(DEFAULT)"
+      end
+   else,
+      address TSO "SUBMIT '"ZTEMPF"'"
+
+return                                 /*@ BJ_BUILD_JCL              */
+/*
+   Where to put the load module?  Where to put the listings?
+.  ----------------------------------------------------------------- */
+BJA_OUTPUT_WHERE:                      /*@                           */
+   bja_tv = trace()                    /* what setting at entry ?    */
+   if branch then call BRANCH
+   address ISPEXEC
+
+   listsrc = src                       /* listing membername         */
+   loadsrc = src                       /* load module                */
+   call BJAA_COMPARM_FETCH             /*                           -*/
+
+   call BJAB_GET_PARMS                 /*                           -*/
+                                    if sw.0error_found then return
+                                    rc = Trace("O"); rc = trace(bja_tv)
+   call BJAJ_RESET_CLASS               /* change job class          -*/
+   call BJAM_LOAD_PROCESS              /*                           -*/
+   call BJAZ_COMPARM_STORE             /*                           -*/
+
+return                                 /*@ BJA_OUTPUT_WHERE          */
+/*
+   Call COMPARM with mbrname FETCH; data is returned in a Global
+      Conformed Line: {rc (xef) shortmsg (xef) longmsg (xef) info}
+.  Load values for panel FROMTO:  swcics <- cpcics ;
+                                  lodds  <- cplib ; listds <- cplist .
+.  ----------------------------------------------------------------- */
+BJAA_COMPARM_FETCH:                    /*@                           */
+   if branch then call BRANCH
+   address TSO
+
+   "NEWSTACK"
+   parse value src "none" with src .
+   cmd = "COMPARM FETCH" src  "((" opts
+   (cmd)
+   parse pull cp_rc (xef) cp_sm (xef) cp_lm (xef) info
+   "DELSTACK"
+   logpref = "("Branch("ID")")"
+   call ZL_LOGMSG( logpref cmd":" ,
+              cp_rc ";"   cp_sm ";"   cp_lm ";" info )
+
+   address ISPEXEC "VGET ( LODDS,LISTDS ) PROFILE"
+   call ZL_LOGMSG( logpref "VGET  LODDS:" lodds "  LISTDS:" listds )
+
+   cpcics   = KEYWD("CPCICS")
+   cplib    = KEYWD("CPLIB")
+   cplist   = KEYWD("CPLIST")
+   cpclass  = KEYWD("CPCLASS")
+   call ZL_LOGMSG( logpref "CPCICS="cpcics"  CPLIB="cplib,
+                           "CPLIST="cplist"  CPCLASS="cpclass )
+
+   parse value cplib  lodds    with ,
+               lodds   .
+   parse value cplist listds   with ,
+               listds  .
+   parse value cpclass "X"     with ,
+               cpclass .
+   swcics   = cpcics
+   /*    cpclass has to go on the jobcard */
+   if cpcics = "Y" then,
+      loadsrc = Left(loadsrc,5)"00"    /* CICS version always 00     */
+
+return                                 /*@ BJAA_COMPARM_FETCH        */
+/*
+   Pop a panel to get the compile instructions: CICS or not;
+   LINK or not; dataset names and member names; etc...
+.  ----------------------------------------------------------------- */
+BJAB_GET_PARMS:                        /*@                           */
+   if branch then call BRANCH
+   address ISPEXEC
+
+   "VGET ZPFCTL"; save_zpf = zpfctl    /* save current setting       */
+   do forever
+      if listds <> "" then list = listsrc                   /* seed */
+                      else list = ""
+      if lodds  <> "" then lmod = loadsrc                   /* seed */
+                      else lmod = ""
+
+      zwinttl = "Compile" srcds"("src")"
+      zpfctl = "OFF"; "VPUT ZPFCTL"    /* PFSHOW OFF                 */
+      "ADDPOP ROW(8) COLUMN(5)"
+      "DISPLAY PANEL(FROMTO)"
+      disp_rc = rc
+      "REMPOP ALL"
+      zpfctl = save_zpf; "VPUT ZPFCTL" /* restore                    */
+
+      if disp_rc > 0 then do
+         sw.0error_found = "1"         /* Halt                       */
+         leave
+         end
+
+      golink = ok2link = "Y"           /* permission to link ?       */
+      if golink then,
+      if lodds <> "" then do
+         if Sysdsn("'"lodds"'") <> "OK" then do
+            zerrsm = "LOADLIB?"
+            zerrlm = "Named library not available"
+            "SETMSG  MSG(ISRZ002)"
+            iterate
+            end
+         if lmod = "" then golink = "0"
+         end                           /* lodds                      */
+      else golink = "0"                /* LODDS is blank             */
+
+      saveprt = "0"
+      if listds <> "" then do
+         if Sysdsn("'"listds"'") <> "OK" then do
+            zerrsm = "LISTING?"
+            zerrlm = "Named library not available"
+            "SETMSG  MSG(ISRZ002)"
+            iterate
+            end
+         @RC = Listdsi("'"listds"' DIRECTORY")
+         if sysdsorg = "PO" then,
+            if list = "" then do
+               zerrsm = "What List mbr?"
+               zerrlm = "Specify a member name for the listing."
+               "SETMSG MSG(ISRZ002)"
+               iterate
+               end ; else nop
+         else list = ""                /* not PO, zap membername     */
+         saveprt = "1"
+         end                           /* listds                     */
+
+      if swcics = "Y" then,
+         sysparm = "SYSTEM(CICS)"
+      else sysparm = ""
+
+      leave                            /* all data is correct        */
+   end                                 /* forever                    */
+
+return                                 /*@ BJAB_GET_PARMS            */
+/*
+   Pull all the JOBcards.  Find "CLASS=" and replace that value with
+   CPCLASS if different.
+.  ----------------------------------------------------------------- */
+BJAJ_RESET_CLASS:                      /*@                           */
+   if branch then call BRANCH
+   address ISPEXEC
+
+   cls = "CLASS="
+   if Pos(cls,JOB1L) > 0 then do
+      pt = Pos(cls,JOB1L) + 6          /* point to jobclass          */
+      if Substr(JOB1L,pt,1) = cpclass then return
+      JOB1L = Overlay(cpclass,JOB1L,pt,1)
+      "VPUT JOB1L PROFILE"
+      return
+      end
+
+   "VGET (JOB2 JOB3 JOB4) ASIS"        /* jobcards                   */
+   if Pos(cls,JOB2) > 0 then do
+      pt = Pos(cls,JOB2) + 6           /* point to jobclass          */
+      if Substr(JOB2,pt,1) = cpclass then return
+      JOB2 = Overlay(cpclass,JOB2,pt,1)
+      "VPUT JOB2 PROFILE"
+      return
+      end
+
+   if Pos(cls,JOB3) > 0 then do
+      pt = Pos(cls,JOB3) + 6           /* point to jobclass          */
+      if Substr(JOB3,pt,1) = cpclass then return
+      JOB3 = Overlay(cpclass,JOB3,pt,1)
+      "VPUT JOB3 PROFILE"
+      return
+      end
+
+   if Pos(cls,JOB4) > 0 then do
+      pt = Pos(cls,JOB4) + 6           /* point to jobclass          */
+      if Substr(JOB4,pt,1) = cpclass then return
+      JOB4 = Overlay(cpclass,JOB4,pt,1)
+      "VPUT JOB4 PROFILE"
+      return
+      end
+
+return                                 /*@ BJAJ_RESET_CLASS          */
+/*
+   Load source library with PROCESS statements.  If any are missing,
+   add them, but leave alone any that already exist.  This allows a
+   developer to alter the PROCESS statement to suit.
+.  ----------------------------------------------------------------- */
+BJAM_LOAD_PROCESS:                     /*@                           */
+   if branch then call BRANCH
+   address ISPEXEC
+
+   "LMINIT DATAID(SRCID) DATASET('"srcds"')"
+   do Words(mbrstring)
+      parse var mbrstring pmbr mbrstring
+      procds = srcds"("pmbr")"
+      if Sysdsn("'"procds"'") <> "OK" then do /* add it              */
+         "LMCOPY FROMID("daid.SLIB") FROMMEM("pmbr")",
+              "TODATAID("srcid")       TOMEM("pmbr")"
+         "LMMSTATS DATAID("srcid") MEMBER("pmbr") VERSION(99)",
+                  "MODLEVEL(00) CREATED("date2") MODDATE("date2")",
+                  "MODTIME("time_c") CURSIZE(2) INITSIZE(2)",
+                  "MODRECS(0) USER8(COMPILE) CREATED4("date4")",
+                  "MODDATE4("date4") "
+         end                           /* procds                     */
+   end                                 /* mbrstring                  */
+   "LMFREE DATAID("srcid")"
+
+return                                 /*@ BJAM_LOAD_PROCESS         */
+/*
+   call COMPARM with mbrname STORE; load values from panel FROMTO:
+   swcics -> cpcics;  lodds  -> cplib; listds -> cplist.
+.  ----------------------------------------------------------------- */
+BJAZ_COMPARM_STORE:                    /*@                           */
+   if branch then call BRANCH
+   address ISPEXEC
+
+   cpcics   = swcics
+   cplib    = lodds
+   cplist   = listds
+   info     = "CPCICS" cpcics "CPTYPE E"      "CPLIB" cplib,
+              "CPLIST" cplist "CPCLASS" cpclass
+/* "VPUT (CPCICS CPLIB CPLIST CPCLASS) SHARED" */
+   if swcics = "Y" then swdinit = "N"
+
+   address TSO
+   "NEWSTACK"
+   "COMPARM STORE" src  info "((" opts
+   parse pull cp_rc (xef) cp_sm (xef) cp_lm (xef) .
+   "DELSTACK"
+
+return                                 /*@ BJAZ_COMPARM_STORE        */
+/*
+   Retrieve <ctlcard>(TMPSTEPL).
+   The first token is the tag; the remainder is the value for the tag.
+   Tokens expected: TMPSTEPL
+   May be empty
+.  ----------------------------------------------------------------- */
+BJB_GET_OVERRIDES:                     /*@                           */
+   if branch then call BRANCH
+   address TSO
+
+   "ALLOC FI(@TMP) DA('"ctlcard"(TMPSTEPL)') SHR REU"
+   logpref = "("Branch("ID")")"
+   "NEWSTACK"
+   "EXECIO * DISKR @TMP (FINIS"
+   if queued() = 0 then,
+      call ZL_LOGMSG( logpref "TMPSTEPL is empty" )
+   else,
+   do queued()
+      pull tag tagval
+      tagval = Strip(tagval)
+      @z = Value(tag,tagval)           /* load value                 */
+   end                                 /* queued                     */
+   "DELSTACK"
+   "FREE  FI(@TMP)"
+
+return                                 /*@ BJB_GET_OVERRIDES         */
+/*
+.  ----------------------------------------------------------------- */
+BZ_DROP_LIBDEFS:                       /*@                           */
+   if branch then call BRANCH
+   address ISPEXEC
+
+   dd = ""
+   do Words(ddnlist)                   /* each LIBDEF DD             */
+      parse value ddnlist dd with dd ddnlist
+      @ddn   = @ddn.dd                 /* PLIB322 <- PLIB            */
+      "LIBDEF  ISP"dd
+      address TSO "FREE  FI("@ddn")"
+   end
+   ddnlist = ddnlist dd
+
+return                                 /*@ BZ_DROP_LIBDEFS           */
+/*
+.  ----------------------------------------------------------------- */
+LOCAL_PREINIT:                         /*@ customize opts            */
+   address TSO
+
+   if SWITCH("INSTALL") then do
+      queue "COMPILE"
+      queue  0
+      queue "SELECT CMD(%COMPILE |&ZDSN |&ZMEM |&ZMEMB |&ZPARM )"
+      queue "Compile a PLI source module"
+      "FCCMDUPD"
+      exit
+      end                              /* INSTALL                    */
+
+   msglim    = SYSVAR( "SYSWTERM" ) - 12
+   sw.0Log   = SWITCH( "LOG" ) = 1
+   modify    = SWITCH( "EDIT" )
+
+
+   "NEWSTACK"
+   "RUNDATA READ  TBLKEY COMPILE "     /* sets required DSNs         */
+   do queued()                         /* return from RUNDATA        */
+      pull tag tagval
+      if tag = "<ERROR>" then do
+         sw.0Error_Found = 1
+         "DELSTACK"
+         say tag tagval
+         return
+         end
+      tagval  = Space( tagval,1 )
+      @z   = Value( tag,tagval )       /* tag <-- tagval             */
+   end                                 /* queued                     */
+   "DELSTACK"
+   if Symbol( 'SDFHLINK' ) = 'LIT' |,
+   if Symbol( 'SDFHLOAD' ) = 'LIT' |,
+   if Symbol( 'SDFHMAC ' ) = 'LIT' |,
+   if Symbol( 'SDFHSAMP' ) = 'LIT' |,
+   if Symbol( 'SYSUEXIT' ) = 'LIT' |,
+   if Symbol( 'SCEELKED' ) = 'LIT' |,
+   if Symbol( 'SCEESAMP' ) = 'LIT' |,
+   if Symbol( 'SYSPROC ' ) = 'LIT' |,
+   if Symbol( 'CTLCARD ' ) = 'LIT' then do
+      helpmsg = "One or more required values were not provided",
+                "by RUNDATA.  "exec_name" will fail if allowed",
+                "to run.  RUNDATA should provide values for",
+                "SDFHLINK SDFHLOAD SDFHMAC SDFHSAMP SYSUEXIT",
+                "SCEELKED SCEESAMP SYSPROC and CTLCARD."
+      call HELP                        /*                           -*/
+      end
+
+return                                 /*@ LOCAL_PREINIT             */
+/*   subroutines below LOCAL_PREINIT are not selected by SHOWFLOW    */
+/*
+.  ----------------------------------------------------------------- */
+ZB_SAVELOG:                            /*@                           */
+   if branch then call BRANCH
+   address TSO
+
+   if Symbol("LOG#") = "LIT" then return          /* not yet set     */
+
+   "ALLOC FI(@LOG) DA("logdsn") REU" vb4k.0
+   "EXECIO" log# "DISKW @LOG (STEM LOG. FINIS"
+   "FREE  FI(@LOG)"
+
+return                                 /*@ ZB_SAVELOG                */
+/*
+.  ----------------------------------------------------------------- */
+ZL_LOGMSG: Procedure expose,           /*@                           */
+   (tk_globalvars)  log. log#  msglim
+   rc = Trace("O")
+   address TSO
+
+   parse arg msgtext
+
+   /* for making the msgline always reasonably short:                */
+   do while Length(msgtext) > msglim
+      pt    = LastPos(" ",msgtext,msglim)
+      slug  = Left(msgtext,pt)
+      if monitor then say,
+         slug
+      parse value  log#+1  slug        with,
+                   zz      log.zz    1  log#   .
+      msgtext = "       "Substr(msgtext,pt)
+   end                                 /* while msglim               */
+
+   parse value  log#+1  msgtext     with,
+                zz      log.zz    1  log#   .
+
+   if monitor then say,
+      msgtext
+
+return                                 /*@ ZL_LOGMSG                 */
+/*
+   Parse out the embedded components at the back of the source code.
+.  ----------------------------------------------------------------- */
+DEIMBED: Procedure expose,             /*@                           */
+   (tk_globalvars)  ddnlist  @ddn.  daid.
+
+   address TSO
+
+   fb80po.0  = "NEW UNIT(VIO) SPACE(5 5) TRACKS DIR(40)",
+                   "RECFM(F B) LRECL(80) BLKSIZE(0)"
+   parse value ""   with  ddnlist @ddn.  daid.
+
+   lastln   = sourceline()
+   currln   = lastln                   /*                            */
+   if Left(sourceline(currln),2) <> "*/" then return
+
+   currln = currln - 1                 /* previous line              */
+   "NEWSTACK"
+   address ISPEXEC
+   do while sourceline(currln) <> "/*"
+      text = sourceline(currln)        /* save with a short name !   */
+      if Left(text,3) = ")))" then do  /* package the queue          */
+         parse var text ")))" ddn mbr .   /* PLIB PANL001  maybe     */
+         if Pos(ddn,ddnlist) = 0 then do  /* doesn't exist           */
+            ddnlist = ddnlist ddn      /* keep track                 */
+            @ddn = ddn || Random(999)
+            @ddn.ddn = @ddn
+            address TSO "ALLOC FI("@ddn")" fb80po.0
+            "LMINIT DATAID(DAID) DDNAME("@ddn")"
+            daid.ddn = daid
+            end
+         daid = daid.ddn
+         "LMOPEN DATAID("daid") OPTION(OUTPUT)"
+         do queued()
+            parse pull line
+            "LMPUT DATAID("daid") MODE(INVAR) DATALOC(LINE) DATALEN(80)"
+         end
+         "LMMADD DATAID("daid") MEMBER("mbr")"
+         "LMCLOSE DATAID("daid")"
+         end                           /* package the queue          */
+      else push text                   /* onto the top of the stack  */
+      currln = currln - 1              /* previous line              */
+   end                                 /* while                      */
+   address TSO "DELSTACK"
+
+return                                 /*@ DEIMBED                   */
+/*
+.  ----------------------------------------------------------------- */
+HELP:                                  /*@                           */
+address TSO;"CLEAR"
+if helpmsg <> "" then say helpmsg; say ""
+ex_nam = Left(exec_name,8)             /* predictable size           */
+
+say "  "ex_nam"      (v.2) submits a background job to compile and link the    "
+say "                current source program.  You should be in Edit or View on "
+say "                the source to be compiled.                                "
+say "                                                                          "
+say "                This version of "exec_name" is RUNDATA-aware.  The RUNDATA"
+say "                table is the source for many required DSNames.            "
+say "                                                                          "
+say "  Syntax:   "ex_nam"  INTEST                                              "
+say "                      TEMPSL                                              "
+say "                      NOINIT                                              "
+say "                 ((   EDIT                                                "
+say "                      INSTALL                                             "
+say "                      LOG                                                 "
+say "                                                                          "
+say "            INTEST    specifies that this compile will be input to an     "
+say "                      InterTest session.  A NOSTMT option will be added   "
+say "                      for this compile.                                   "
+"NEWSTACK"; pull ; "CLEAR" ; "DELSTACK "
+say "                                                                          "
+say "            TEMPSL    specifies that a temporary override to STEPLIB is to"
+say "                      be used for this compilation.  The STEPLIB override "
+say "                      name is to be found in <ctlcard>(TMPSTEPL).  The    "
+say "                      value for <ctlcard> is obtained from the RUNDATA    "
+say "                      table.                                              "
+say "                                                                          "
+say "            NOINIT    Normally, a 'DFT(INITFILL)' *PROCESS statement is   "
+say "                      added for development-level compiles.  NOINIT       "
+say "                      bypasses adding this line.                          "
+say "                                                                          "
+say "            EDIT      causes the composed JCL to be presented in EDIT for "
+say "                      last-minute changes.                                "
+say "                                                                          "
+say "            INSTALL   writes a shortcut command for this routine onto the "
+say "                      user's command table.                               "
+say "                                                                          "
+say "            LOG       causes the log to be produced even in the absence of"
+say "                      an error.  Ordinarily, the log is not produced      "
+say "                      unless an error is detected.                        "
+say "                                                                          "
+"NEWSTACK"; pull ; "CLEAR" ; "DELSTACK "
+say "   Debugging tools provided include:                                      "
+say "                                                                          "
+say "        BRANCH    show all paragraph entries.                             "
+say "                                                                          "
+say "        TRACE tv  will use value following TRACE to place the             "
+say "                  execution in REXX TRACE Mode.                           "
+say "                                                                          "
+say "                                                                          "
+say "   Debugging tools can be accessed in the following manner:               "
+say "                                                                          "
+say "        TSO "ex_nam"  parameters     ((  debug-options                    "
+say "                                                                          "
+say "   For example                                                            "
+say "                                                                          "
+say "        TSO "ex_nam"  (( MONITOR TRACE ?R                                 "
+
+if sysvar("SYSISPF") = "ACTIVE" then,
+   address ISPEXEC "CONTROL DISPLAY REFRESH"
+exit                                   /*@ HELP                      */
+/*
+.  ----------------------------------------------------------------- */
+BRANCH: Procedure expose,              /*@                           */
+        sigl exec_name
+   rc = trace("O")                     /* we do not want to see this */
+   arg brparm .
+
+   origin = sigl                       /* where was I called from ?  */
+   do currln = origin to 1 by -1       /* inch backward to label     */
+      if Right(Word(Sourceline(currln),1),1) = ":" then do
+         parse value sourceline(currln) with pgfname ":" .  /* Label */
+         leave ; end                   /*                name        */
+   end                                 /* currln                     */
+
+   select
+      when brparm = "NAME" then return(pgfname) /* Return full name  */
+      when brparm = "ID"      then do           /* wants the prefix  */
+         parse var pgfname pgfpref "_" .        /* get the prefix    */
+         return(pgfpref)
+         end                           /* brparm = "ID"              */
+      otherwise
+         say left(sigl,6) left(pgfname,40) exec_name "Time:" time("L")
+   end                                 /* select                     */
+
+return                                 /*@ BRANCH                    */
+/*
+.  ----------------------------------------------------------------- */
+DUMP_QUEUE:                            /*@ Take whatever is in stack */
+   rc = trace("O")                     /*  and write to the screen   */
+   address TSO
+   arg mode .
+
+   "QSTACK"                            /* how many stacks?           */
+   stk2dump    = rc - tk_init_stacks   /* remaining stacks           */
+   if stk2dump = 0 & queued() = 0 then return
+   if mode <> "QUIET" then,
+   say "Total Stacks" rc ,             /* rc = #of stacks            */
+    "   Begin Stacks" tk_init_stacks , /* Stacks present at start    */
+    "   Excess Stacks to dump" stk2dump
+
+   do dd = rc to tk_init_stacks by -1  /* empty each one.            */
+      if mode <> "QUIET" then,
+      say "Processing Stack #" dd "   Total Lines:" queued()
+      do queued();parse pull line;say line;end /* pump to the screen */
+      "DELSTACK"                       /* remove stack               */
+   end                                 /* dd = 1 to rc               */
+
+return                                 /*@ DUMP_QUEUE                */
+/*
+.  ----------------------------------------------------------------- */
+KEYWD: Procedure expose info           /*@ hide all vars, except info*/
+   arg kw
+   kw_pos = wordpos(kw,info)           /* find where it is, maybe    */
+   if kw_pos = 0 then return ""        /* send back a null, not found*/
+   kw_val = word(info,kw_pos+1)        /* get the next word          */
+   info   = Delword(info,kw_pos,2)     /* remove both                */
+return kw_val                          /*@ KEYWD                     */
+/*
+.  ----------------------------------------------------------------- */
+KEYPHRS: Procedure expose,             /*@                           */
+         info helpmsg exec_name        /*  except these three        */
+   arg kp
+   wp    = wordpos(kp,info)            /* where is it?               */
+   if wp = 0 then return ""            /* not found                  */
+   front = subword(info,1,wp-1)        /* everything before kp       */
+   back  = subword(info,wp+1)          /* everything after kp        */
+   parse var back dlm back             /* 1st token must be 2 bytes  */
+   if length(dlm) <> 2 then            /* Must be two bytes          */
+      helpmsg = helpmsg,
+         "Invalid length for delimiter("dlm") with KEYPHRS("kp")"
+   if wordpos(dlm,back) = 0 then       /* search for ending delimiter*/
+      helpmsg = helpmsg,
+         "No matching second delimiter("dlm") with KEYPHRS("kp")"
+   if helpmsg <> "" then call HELP     /* Something is wrong         */
+   parse var back kpval (dlm) back     /* get everything b/w delim   */
+   info =  front back                  /* restore remainder          */
+return Strip(kpval)                    /*@ KEYPHRS                   */
+/*
+.  ----------------------------------------------------------------- */
+NOVALUE:                               /*@                           */
+   say exec_name "raised NOVALUE at line" sigl
+   say " "
+   say "The referenced variable is" condition("D")
+   say " "
+   zsigl = sigl
+   signal SHOW_SOURCE                  /*@ NOVALUE                   */
+/*
+.  ----------------------------------------------------------------- */
+SHOW_SOURCE:                           /*@                           */
+   call DUMP_QUEUE                     /* Spill contents of stacks  -*/
+   if sourceline() <> "0" then         /* to screen                  */
+      say sourceline(zsigl)
+   rc =  trace("?R")
+   nop
+   exit                                /*@ SHOW_SOURCE               */
+/*
+.  ----------------------------------------------------------------- */
+SS: Procedure                          /*@ Show Source               */
+   arg  ssbeg  ssend  .
+   if ssend = "" then ssend = 10
+   if \datatype(ssbeg,"W") | \datatype(ssend,"W") then return
+   ssend = ssbeg + ssend
+   do ssii = ssbeg to ssend ; say sourceline(ssii) ; end
+return                                 /*@ SS                        */
+/*
+.  ----------------------------------------------------------------- */
+SWITCH: Procedure expose info          /*@                           */
+   arg kw
+   sw_val = Wordpos(kw,info) > 0       /* exists = 1; not found = 0  */
+   if sw_val then                      /* exists                     */
+      info = Delword(info,Wordpos(kw,info),1) /* remove it           */
+return sw_val                          /*@ SWITCH                    */
+/*
+.  ----------------------------------------------------------------- */
+SYNTAX:                                /*@                           */
+   errormsg = exec_name "encountered REXX error" rc "in line" sigl":",
+                        errortext(rc)
+   say errormsg
+   zsigl = sigl
+   signal SHOW_SOURCE                  /*@ SYNTAX                    */
+/*
+   Can call TRAPOUT.
+.  ----------------------------------------------------------------- */
+TOOLKIT_INIT:                          /*@                           */
+   address TSO
+   info = Strip(opts,"T",")")          /* clip trailing paren        */
+
+   parse source  sys_id  how_invokt  exec_name  DD_nm  DS_nm,
+                     as_invokt  cmd_env  addr_spc  usr_tokn
+
+   parse value "" with  tv  helpmsg  .
+   parse value 0   "ISR00000  YES"     "Error-Press PF1"    with,
+               sw.  zerrhm    zerralrm  zerrsm
+
+   if SWITCH("TRAPOUT") then do
+      "TRAPOUT" exec_name parms "(( TRACE R" info
+      exit
+      end                              /* trapout                    */
+
+   if Word(parms,1) = "?" then call HELP /* I won't be back          */
+
+   "QSTACK" ; tk_init_stacks = rc      /* How many stacks?           */
+
+   parse value SWITCH("BRANCH") SWITCH("MONITOR") SWITCH("NOUPDT") with,
+               branch           monitor           noupdt    .
+
+   parse value mvsvar("SYSNAME") sysvar("SYSNODE") with,
+               lpar              node          .
+
+   sw.nested    = sysvar("SYSNEST") = "YES"
+   sw.batch     = sysvar("SYSENV")  = "BACK"
+   sw.inispf    = sysvar("SYSISPF") = "ACTIVE"
+
+   parse value KEYWD("TRACE")  "N"    with   tv  .
+   tk_globalvars = "exec_name  tv  helpmsg  sw.  zerrhm  zerralrm ",
+                   "zerrsm  zerrlm  tk_init_stacks  branch  monitor ",
+                   "noupdt"
+
+   call LOCAL_PREINIT                  /* for more opts             -*/
+
+return                                 /*@ TOOLKIT_INIT              */
+/* ---- Obsolete elements ------------------------
+))) SLIB     PROCESS   Optimizing compiler PROCESS statement
+*PROCESS AG A(F) F(W) INC NIS M MAP NEST OF OP NSEQ S
+         MARGINS(2,72,1) GOSTMT STG X(F) ;
+))) SLIB     PROCICS   Optimizing compiler CICS PROCESS statement
+*PROCESS AG A(F) F(W) INC NIS M MAP NEST OF OP NSEQ S
+         MARGINS(2,72,1) GOSTMT STG X(F) ;
+*/
+/*
+))) PLIB     FROMTO    Set compile parameters
+)ATTR
+  % TYPE( TEXT   ) INTENS( HIGH ) SKIP( ON )
+  + TYPE( TEXT   ) INTENS( LOW  ) SKIP( ON )
+  _ TYPE( INPUT  ) INTENS( HIGH ) CAPS( ON  ) JUST( LEFT  ) PAD( '_' )
+  @ TYPE( OUTPUT ) INTENS( HIGH ) CAPS( OFF ) JUST( LEFT  )
+  { TYPE( OUTPUT ) COLOR( PINK )  CAPS( OFF ) HILITE( BLINK )
+  } TYPE( INPUT  ) INTENS( HIGH ) CAPS( ON  ) JUST( LEFT  )
+)BODY WINDOW(68,12)
++ Source DSN%==>@srcds                                         +
++        Mem%==>@src     +    CICS? ==>}Z+ (Y or N)
+                {namemsg
++       Link%==>}z+
++   Load DSN%==>}lodds                                         +
++        Mem%==>}lmod    +     Set ALIAS to%==>}alias   +
++
++Listing DSN%==>}listds                                        +
++        Mem%==>}list    +    JOB class ==>}Z+
++
++
+)INIT
+  .HELP    = FROMTOH
+  .ZVARS = '(SWCICS OK2LINK        CPCLASS)'
+  .CURSOR  = SWCICS
+  &OK2LINK = 'Y'                       /*                            */
+)PROC
+  VER (&LODDS,DSNAME)
+  VER (&LMOD,NAME)
+  VER (&LISTDS,DSNAME)
+  VER (&LIST,NAME)
+  &OK2LINK = TRANS(&OK2LINK
+               N,N
+               *,Y )
+  &SWCICS = TRANS(&SWCICS
+               Y,Y
+               *,N )
+)END
+))) PLIB     FROMTOH   Set compile parameters HELP
+)ATTR
+  % TYPE( TEXT   ) INTENS( HIGH ) SKIP( ON )
+  + TYPE( TEXT   ) INTENS( LOW  ) SKIP( ON )
+  _ TYPE( INPUT  ) INTENS( HIGH )
+  ! TYPE( OUTPUT ) INTENS( HIGH ) SKIP( ON )
+  @ TYPE( OUTPUT ) INTENS( LOW  ) SKIP( ON )
+)BODY EXPAND(||)
+%TUTORIAL |-| COMPILE -- Specify Target |-| TUTORIAL %Next Selection
+===>_ZCMD
++
+     The%FROMDSN+and%FROMMBR+have been determined by your current location.
+     Other fields are populated based on what you entered the last time you
+     compiled this program.
+
+     If this is a%CICS module,+enter "Y" for CICS; otherwise, enter "N".
+
+     Please specify a datasetname and member for the%load+module.  If you do
+     not want to Linkedit, set%"Link"+to N.  If you specify an ALIAS, the
+     Linkage Editor step will rename the load module appropriately.
+
+     Please specify a datasetname and member for the%output listing dataset.+
+     If the datasetname is left%blank,+the listing will%not+be saved.  If the
+     datasetname is for a%sequential dataset,+the membername is ignored.
+
+)PROC
+   &ZCONT = FROMTOH
+   &ZUP   = FROMTOH
+)END
+))) SLIB     COMPILE   Compile JCL
+&JOB1L
+&JOB2
+&JOB3
+&JOB4
+//*JOBPARM SYSAFF=&LPAR           */
+)SEL    &SWCICS = Y
+//JOBLIB    DD DISP=SHR,DSN=&SDFHLINK
+)ENDSEL &SWCICS = Y
+//* --------------- Establish primary input --------------------     */
+//ORIGIN   EXEC PGM=IEFBR14
+//SOURCE    DD DISP=SHR,DSN=&SRCDS(&SRC)
+)SET LSTEP = ORIGIN
+)SET LDDN  = SOURCE
+)SEL    &SWCICS = Y
+//* --------------- CICS precompiler ---------------------------     */
+//CICSPRE  EXEC PGM=DFHEPP1$,REGION=4096K
+//STEPLIB   DD DISP=SHR,DSN=&SDFHLOAD
+//SYSIN     DD *
+)IM DFHEPP
+//          DD DISP=(SHR,PASS),
+//             DSN=*.&LSTEP..&LDDN
+//SYSPRINT  DD SYSOUT=*
+//SYSPUNCH  DD UNIT=VIO,SPACE=(CYL,(5,1)),DISP=(,PASS),
+//             DCB=(RECFM=FB,LRECL=80,BLKSIZE=0)
+)SET LSTEP = CICSPRE
+)SET LDDN  = SYSPUNCH
+//            IF (CICSPRE.RC << 8) THEN
+)ENDSEL &SWCICS = Y
+//* --------------- Enterprise Compiler ------------------------     */
+//COMP     EXEC PGM=IBMZPLI,
+//             PARM='&SYSPARM',REGION=125M
+//STEPLIB   DD DISP=SHR,
+)SEL    &SWSTEPL = Y
+//             DSN=&TMPSTEPL
+//          DD DISP=SHR,
+)ENDSEL &SWSTEPL = Y
+//*            DSN=IBMZ.SIBMZCMP             EPLI  v3.4 */
+//             DSN=SYS2.SIBMZCMP             EPLI  v3.6
+//SYSIN     DD *
+)IM CPRIGHT
+)SEL    &SWDINIT = Y
+)IM INT8F
+)ENDSEL &SWDINIT = Y
+//          DD DISP=SHR,
+//             DSN=&PROCDS
+)SEL    &SWCICS = Y
+)SEL    &SWINTST = Y
+//          DD DISP=(SHR,PASS),
+//             DSN=&ITSTDS
+)ENDSEL &SWINTST = Y
+)ENDSEL &SWCICS = Y
+//          DD DISP=(SHR,PASS),
+//             DSN=*.&LSTEP..&LDDN
+//SYSLIB    DD DISP=SHR,DSN=&SRCDS
+)SEL    &SWCICS = Y
+//          DD DISP=SHR,DSN=CICS.SDFHPL1
+//          DD DISP=SHR,DSN=&SDFHMAC
+//          DD DISP=SHR,DSN=&SDFHSAMP
+)ENDSEL &SWCICS = Y
+//          DD DUMMY DISP=SHR,DSN=???        <<== THIS S/B SET
+//          DD DUMMY DISP=SHR,DSN=???        <<== THIS S/B SET
+//          DD DUMMY DISP=SHR,DSN=???        <<== THIS S/B SET
+)SEL    &SWCICS = Y
+//          DD DUMMY DISP=SHR,DSN=???        <<== THIS S/B SET
+//          DD DUMMY DISP=SHR,DSN=???        <<== THIS S/B SET
+//          DD DUMMY DISP=SHR,DSN=???        <<== THIS S/B SET
+)ENDSEL &SWCICS = Y
+//SYSLIN    DD DISP=(MOD,PASS),UNIT=VIO,
+//             SPACE=(TRK,(200,50))
+//STDOUT    DD SYSOUT=*
+//SYSOUT    DD SYSOUT=*
+//SYSPRINT  DD UNIT=VIO,DISP=(NEW,PASS),SPACE=(CYL,(1,5))
+//SYSUT1    DD UNIT=VIO,
+//             SPACE=(1024,(200,50),,CONTIG,ROUND),DCB=BLKSIZE=1024
+//SYSUEXIT  DD DUMMY DISP=SHR,DSN=&SYSUEXIT
+)SEL    &GOLINK = 1
+//*                                                                  */
+//            IF (COMP.RC << 8) THEN
+//* --------------- Linkage Editor -----------------------------     */
+//LKED     EXEC PGM=IEWL,REGION=8M,
+//             PARM='XREF,LIST'
+//*                                                                  */
+//SYSLIB    DD DISP=SHR,DSN=SYS1.LINKLIB
+)SEL    &SWCICS = Y
+//          DD DISP=SHR,DSN=&SDFHLOAD
+)ENDSEL &SWCICS = Y
+//          DD DISP=SHR,DSN=&SCEELKED
+//*                                                                  */
+//SYSLIN    DD DISP=(OLD,PASS),
+)SEL    &SWCICS = Y
+//             DSN=&SCEESAMP
+//          DD DISP=(OLD,PASS),
+)ENDSEL &SWCICS = Y
+//             DSN=*.COMP.SYSLIN
+//          DD DDNAME=SYSIN
+//SYSLMOD   DD DISP=SHR,DSN=&LODDS(&LMOD)
+//SYSPRINT  DD UNIT=VIO,DISP=(NEW,PASS),SPACE=(CYL,(1,5))
+//SYSUT1    DD DISP=(NEW,PASS),UNIT=VIO,
+//             SPACE=(1024,(200,50),,CONTIG,ROUND),DCB=BLKSIZE=1024
+)SEL    &ALIAS EQ &Z
+//SYSIN     DD DUMMY
+)ENDSEL &ALIAS EQ &Z
+)SEL    &ALIAS NE &Z
+//SYSIN     DD *
+    ALIAS  &ALIAS
+    NAME   &LMOD(R)
+)ENDSEL &ALIAS NE &Z
+//*                                                                  */
+//            ENDIF
+//*                                                                  */
+)ENDSEL &GOLINK = 1
+//* --------------- Send listings to sysout --------------------     */
+//PRINT1   EXEC PGM=IEBGENER
+//SYSUT1    DD DISP=(SHR,PASS),DSN=*.COMP.SYSPRINT
+//SYSUT2    DD SYSOUT=*
+//SYSIN     DD DUMMY
+//SYSPRINT  DD DUMMY
+//*                                                                  */
+//* ----------                                                       */
+//            IF (COMP.RC << 8) THEN
+//*                                                                  */
+)SEL    &GOLINK = 1
+//PRINT2   EXEC PGM=IEBGENER
+//SYSUT1    DD DISP=(SHR,PASS),DSN=*.LKED.SYSPRINT
+//SYSUT2    DD SYSOUT=*
+//SYSIN     DD DUMMY
+//SYSPRINT  DD DUMMY
+//*                                                                  */
+)ENDSEL &GOLINK = 1
+)SEL    &SAVEPRT = 1
+//* --------------- Combine COMP and LKED lists ----------------     */
+//*                                                                  */
+//COMBINE  EXEC PGM=IKJEFT01,DYNAMNBR=300,
+//             PARM='COMBINE @COMP @LINK (( RACE R'
+//SYSTSIN   DD DUMMY
+//SYSTSPRT  DD SYSOUT=*
+//SYSPROC   DD DISP=SHR,DSN=&SYSPROC.
+//@COMP     DD DISP=(SHR,PASS),DSN=*.COMP.SYSPRINT
+)SEL    &GOLINK = 0
+//@LINK     DD DUMMY
+)ENDSEL &GOLINK = 0
+)SEL    &GOLINK = 1
+//@LINK     DD DISP=(SHR,PASS),DSN=*.LKED.SYSPRINT
+)ENDSEL &GOLINK = 1
+)SEL    &LIST = &Z
+//@PRINT    DD DISP=SHR,DSN=&LISTDS
+)ENDSEL &LIST = &Z
+)SEL    &LIST ¬= &Z
+//@PRINT    DD DISP=SHR,DSN=&LISTDS(&LIST)
+)ENDSEL &LIST ¬= &Z
+)SET LSTEP = COMBINE
+)SET LDDN  = @PRINT
+//*                                                                  */
+)ENDSEL &SAVEPRT = 1
+//* ----------                                                       */
+//            ELSE
+)SEL    &SAVEPRT = 1
+//* --------------- Failure: only save COMP.SYSPRINT -----------     */
+//PLIFAIL  EXEC PGM=IKJEFT01,
+//         DYNAMNBR=300,PARM='COMBINE @COMP (( RACE R'
+//SYSTSIN   DD DUMMY
+//SYSTSPRT  DD SYSOUT=*
+//SYSPROC   DD DISP=SHR,DSN=*.COMBINE.SYSPROC
+//@COMP     DD DISP=(SHR,PASS),DSN=*.COMP.SYSPRINT
+//@PRINT    DD DISP=(SHR,PASS),DSN=*.COMBINE.@PRINT
+//*                                                                  */
+)ENDSEL &SAVEPRT = 1
+//            ENDIF
+)SEL    &LIST ¬= &Z
+//* --------------- Add stats to listing member ----------------     */
+//PLIXREF  EXEC PGM=IKJEFT01,DYNAMNBR=300
+//SYSTSPRT  DD SYSOUT=*
+//SYSTSIN   DD *
+  ISPSTART CMD(ADDXREF  &LISTDS(&LIST)  )
+//SYSEXEC   DD DISP=SHR,DSN=&SYSPROC
+//ISPLOG    DD DISP=NEW,UNIT=VIO,
+//             SPACE=(TRK,(1,1)),
+//             DCB=(LRECL=121,RECFM=FB,BLKSIZE=0)
+//ISPPROF   DD DISP=NEW,UNIT=VIO,SPACE=(CYL,(1,1,15)),
+//             DCB=(LRECL=80,RECFM=FB,BLKSIZE=0)
+//ISPPLIB   DD DISP=SHR,DSN=ISP.SISPPENU
+//ISPMLIB   DD DISP=SHR,DSN=ISP.SISPMENU
+//ISPSLIB   DD DISP=SHR,DSN=ISP.SISPSENU
+//ISPTLIB   DD DISP=SHR,DSN=ISP.SISPTENU
+//* ----------                                                       */
+)ENDSEL &LIST ¬= &Z
+)SEL    &SWCICS = Y
+//            ENDIF
+)ENDSEL &SWCICS = Y
+))) SLIB     CPRIGHT   Copyright notice
+*PROCESS COPYRIGHT('(C) Copyright -your company-      - &ccyy');
+))) SLIB     DFHEPP    CICS PROCESS statement
+*PROCESS CICS (SP,NOSOURCE) ;
+))) SLIB     ENTCICS   Enterprise compiler CICS PROCESS
+*PROCESS A(FULL) MAP INCLUDE M STORAGE RULES(LAXLINK)
+         MARGINS(2,72,1) FLAG(W) X(FULL) ;
+*PROCESS PREFIX(STRINGRANGE,SUBSCRIPTRANGE) ;
+))) SLIB     INTEST    Enterprise compiler InterTest
+*PROCESS NOSTMT
+))) SLIB     INT8F     INITFILL PROCESS statement
+*PROCESS DFT(INITFILL('8F'));
+))) SLIB     PROCENT   Enterprise compiler PROCESS
+*PROCESS AG A(F) F(W) INC NIS M MAP NEST OF OP  S
+         MARGINS(2,72,1) GOSTMT STG X(F) ;
+*PROCESS PREFIX(STRINGRANGE,SUBSCRIPTRANGE) ;
+*/
